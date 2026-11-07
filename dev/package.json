@@ -1,0 +1,1 @@
+{"name":"office-dev","private":true,"type":"module","dependencies":{"liquidjs":"10.19.0","terser":"^5.51.2"}}

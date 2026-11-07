@@ -1,0 +1,52 @@
+---
+strategy: none
+no_screen_padding: 'yes'
+dark_mode: 'no'
+static_data:
+polling_verb: get
+framework_version:
+serverless_language:
+refresh_interval_floor:
+polling_url:
+polling_headers:
+polling_body:
+id: 529485
+oauth_enabled: 'false'
+oauth_pkce_enabled: 'no'
+custom_fields:
+- keyname: about
+  name: About this plugin
+  field_type: author_bio
+  description: 'A pixel-art office tower that lives along with your day, in black and white. People come in, ride the lift, work at their desks, queue for coffee and head home again. After dark the tower gets quiet.<br><br>Every company name gets its own tower. Every day goes a little differently, and some things only happen once in a while. Keep an eye on it.<br><br>Live version? Check out trmnl.achtnegen.nl/office'
+  email_address: trmnl@achtnegen.nl
+  learn_more_url: https://trmnl.achtnegen.nl/office/
+  category: humor
+- keyname: company
+  field_type: string
+  name: Company name
+  description: Shown on the roof sign and in the lobby. Every name gets its own tower, with its own special floors in its own order. Letters and numbers only.
+  placeholder: TINY OFFICE
+  optional: true
+- keyname: floors
+  field_type: select
+  name: Floors
+  description: How many floors to show. Auto picks what suits the view.
+  options:
+  - Auto: auto
+  - '1': '1'
+  - '2': '2'
+  - '3': '3'
+  default: auto
+- keyname: decorations
+  field_type: boolean
+  name: Holidays and seasons
+  description: Christmas tree, Halloween pumpkins, New Year fireworks and more on the right days.
+  default: true
+- keyname: news
+  field_type: boolean
+  name: Office news
+  description: A line of office gossip along the bottom, about what is going on in the tower.
+  default: true
+name: Tiny Office
+description: A pixel office that lives your day
+refresh_interval: 15

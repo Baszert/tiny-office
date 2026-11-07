@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tiny Office Live</title>
+<meta name="description" content="A pixel office tower that lives along with the clock in Amsterdam. Everyone sees the same tower at the same time.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap">
+<style>
+  :root { --bg: #111; --ink: #eee; --bar: #000; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; }
+  body { font-family: 'Silkscreen', ui-monospace, monospace; font-size: 13px; -webkit-font-smoothing: none; }
+  #stage { position: absolute; inset: 0 0 40px 0; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+  #stage.hot { cursor: pointer; }
+  #stage.drag { cursor: grabbing; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: var(--bar); display: flex; align-items: center; gap: 6px; padding: 0 10px; box-sizing: border-box; white-space: nowrap; }
+  #bar .t { margin-right: auto; overflow: hidden; text-overflow: ellipsis; }
+  #bar button { flex-shrink: 0; }
+  #bar b { font-weight: normal; opacity: .6; }
+  button { font: inherit; color: var(--ink); background: transparent; border: 1px solid currentColor; padding: 4px 8px; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,.12); }
+  button:disabled { opacity: .35; cursor: default; }
+  button.on { background: var(--ink); color: var(--bar); }
+  #toast { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: var(--bar); border: 1px solid var(--ink); padding: 6px 12px; display: none; }
+  #card { position: absolute; left: 10px; top: 10px; max-width: 260px; background: var(--bar); border: 1px solid var(--ink); padding: 6px 30px 6px 10px; line-height: 1.5; display: none; cursor: default; pointer-events: auto; }
+  #card .n { font-size: 16px; }
+  #tip { position: absolute; display: none; pointer-events: none; background: var(--bar); color: var(--ink); border: 1px solid var(--ink); padding: 2px 6px; white-space: nowrap; }
+  #card .r { opacity: .7; }
+  #card #cardx { position: absolute; right: 3px; top: 3px; border: 0; padding: 0 6px; font-size: 16px; line-height: 1.2; }
+  .narrow { display: none; }
+  @media (max-width: 560px) {
+    .wide { display: none; }
+    .narrow { display: inline; }
+    #bar { gap: 4px; padding: 0 6px; font-size: 12px; }
+    button { padding: 4px 5px; }
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas>
+  <div id="card"><button id="cardx" title="Stop following">&times;</button><div class="n" id="cn"></div><div class="r" id="cr"></div><div id="cw"></div><div id="cx"></div></div>
+</div>
+<div id="toast"></div>
+<div id="bar">
+  <span class="t"><span class="wide">Tiny Office <b>live</b> </span><span id="clock"></span> <span id="who" class="wide"></span></span>
+  <button id="tv" class="on" title="Follow what happens">TV</button>
+  <button id="bell" title="Ring the doorbell, everyone watching sees it" hidden>Ring</button>
+  <button id="pizza" title="Order pizza for the whole tower, everyone watching sees it" hidden>Pizza</button>
+  <button id="party" title="Throw a party in the whole tower, everyone watching sees it" hidden>Party</button>
+  <button id="pal" title="Change colours">Ink</button>
+  <button id="snd" title="Sound on or off"><span class="wide">Sound</span><span class="narrow">Snd</span></button>
+  <button id="fs" class="wide" title="Full screen">Full</button>
+</div>
+<script src="office.js"></script>
+<script src="live.js"></script>
+</body>
+</html>
