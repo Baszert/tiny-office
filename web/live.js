@@ -3,7 +3,7 @@
 // URL options: ?name=ACME (another tower), ?t=23:30 and ?d=2026-12-31 (time travel),
 // ?speed=60 (fast forward), ?egg=ghost (force a scene), ?floor=5 (start at a floor).
 // Hover a person for their name, click to follow them around the tower, double-click to give them a fright,
-// click a lift door to call the lift, click anywhere else to throw a paper plane (everyone watching sees it), order pizza or throw a party.
+// click a lift door to call the lift, click anywhere else to throw a paper plane (everyone watching sees it), put a line in somebody's mouth from their card, shine a torch into dark rooms with your pointer, order pizza or throw a party.
 // Drag or scroll to look around (it glides on), pinch, ctrl+scroll or +/- to zoom.
 // Lift calls, pizza, parties and the doorbell are shared: everyone watching sees them.
 (function () {
@@ -13,6 +13,29 @@
   var stage = document.getElementById('stage'), cv = document.getElementById('c'), ctx = cv.getContext('2d');
   var art = document.createElement('canvas'), actx = art.getContext('2d');
   var $ = function (id) { return document.getElementById(id); };
+  // the icons are drawn like everything else here: a few rows of pixels
+  var ICONS = {
+    bell: ['....#....', '...###...', '..#####..', '..#####..', '..#####..', '.#######.', '#########', '.........', '...###...'],
+    pizza: ['#########', '#.#...#.#', '.#.....#.', '.#..#..#.', '..#...#..', '..#.#.#..', '...#.#...', '...#.#...', '....#....'],
+    party: ['#...#...#', '..#...#..', '.....#...', '.#.##....', '...###.#.', '..####...', '.####..#.', '####.....', '###......'],
+    tv: ['.#.....#.', '..#...#..', '#########', '#.......#', '#.......#', '#.......#', '#.......#', '#########', '.##...##.'],
+    sound: ['...#.....', '..##..#..', '####...#.', '####.#.#.', '####.#.#.', '####.#.#.', '####...#.', '..##..#..', '...#.....'],
+    mute: ['...#.....', '..##.....', '####.#.#.', '####..#..', '####.#.#.', '####.....', '####.....', '..##.....', '...#.....'],
+    full: ['###...###', '#.......#', '#.......#', '.........', '.........', '.........', '#.......#', '#.......#', '###...###'],
+    help: ['..#####..', '.##...##.', '......##.', '.....##..', '....##...', '....##...', '.........', '....##...', '....##...'],
+    close: ['.........', '##.....##', '.##...##.', '..##.##..', '...###...', '..##.##..', '.##...##.', '##.....##', '.........'],
+    say: ['#########', '#.......#', '#.#.#.#.#', '#.......#', '#########', '..##.....', '..#......', '.........', '.........'],
+    person: ['...###...', '...###...', '...###...', '.........', '.#######.', '.#######.', '.#######.', '..##.##..', '..##.##..']
+  };
+  function icon(el, name) {
+    var NS = 'http://www.w3.org/2000/svg', svg = el.tagName === 'svg' ? el : document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 9 9'); svg.setAttribute('class', (svg.getAttribute('class') || 'i')); svg.setAttribute('aria-hidden', 'true');
+    ICONS[name].forEach(function (row, y) {
+      for (var x = 0; x < row.length; x++) if (row[x] === '#') { var x0 = x; while (row[x + 1] === '#') x++; var r = document.createElementNS(NS, 'rect'); r.setAttribute('x', x0); r.setAttribute('y', y); r.setAttribute('width', x - x0 + 1); r.setAttribute('height', 1); svg.appendChild(r); }
+    });
+    if (svg !== el) el.insertBefore(svg, el.firstChild);
+  }
+  [].forEach.call(document.querySelectorAll('[data-i]'), function (el) { icon(el, el.getAttribute('data-i')); });
   var store = function (k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
 
   // ---------------------------------------------------------------- time
@@ -37,12 +60,17 @@
 
   // ---------------------------------------------------------------- shared state: visitors, the doorbell, lift calls and pizza
   var me = store('office-id') || Math.random().toString(36).slice(2, 12); store('office-id', me);
+  var resEv = [], meKey = null; // who lives in the tower right now, and which one is you
   var online = 1, bellAt = 0, bell0 = null, api = true, srvEv = [], locEv = [], evKey = null, evSeen = {};
   var LIVE = travel == null && SPEED === 1; // shared events only make sense on the real clock
   function apply(j) {
     skew = j.now - Date.now(); online = j.online || 1; bellAt = j.bell || 0; if (bell0 == null) bell0 = bellAt;
-    $('who').textContent = online > 1 ? online + ' watching' : ''; $('bell').hidden = false; $('pizza').hidden = false; $('party').hidden = false;
+    $('whon').textContent = online; $('who').hidden = online < 2; $('bell').hidden = false; $('pizza').hidden = false; $('party').hidden = false;
     if (j.planes) catchPlanes(j.planes);
+    if (j.says) catchSays(j.says);
+    if (j.litter && OP.litter) OP.litter(LIVE ? j.litter.map(function (q) { var e = toEngine({ at: q.at }); return { f: q.f, k: q.k, dir: q.d, day: e.day, s: e.s }; }) : []);
+    if (j.stats && OP.stats) OP.stats(LIVE ? j.stats : null);
+    if (j.res) { resEv = j.res.map(function (q) { return { k: 'res', at: q.in, r: q.r, n: q.n, sd: q.sd, g: q.g, out: q.out || 0 }; }); if (j.me) { meKey = 'res' + j.me; if (OP.me) OP.me(LIVE ? meKey : null); } if (apply.seen) syncEvents(true); }
     if (j.events) { var first = !apply.seen; apply.seen = true; srvEv = j.events; syncEvents(first); }
   }
   // paper planes from everyone watching; my own are already in the air
@@ -52,17 +80,41 @@
     l.forEach(function (q) {
       if (seenPlanes[q.p + q.at] || myPlanes[q.p]) return;
       seenPlanes[q.p + q.at] = 1; planeBusy = Date.now();
-      if (now - q.at < 12000 && OP.plane) { OP.plane(Math.round(q.x * W), q.y, q.c, q.d); if (!document.hidden) sfx('plane'); }
+      if (now - q.at < 12000 && OP.plane) { OP.plane(Math.round(q.x * W), q.y, q.c, q.d, true); if (!document.hidden) sfx('plane'); } // where it lands comes from the server
     });
   }
+  // lines that people watching put in somebody's mouth. Only the number of a line travels, never text.
+  var LINES = ['HELLO INTERNET!', 'IS IT FRIDAY YET?', 'WHO ATE MY LUNCH?', 'I LOVE THIS JOB.', 'NEED. COFFEE.', 'PER MY LAST EMAIL...', 'LET\'S CIRCLE BACK.', 'YOU ARE ON MUTE.', 'I QUIT! JUST KIDDING.', 'NICE TOWER.', 'WHERE IS GUS?', 'PIZZA?'];
+  var mySays = {}, seenSays = {};
+  function catchSays(l) {
+    var now = Date.now() + skew;
+    l.forEach(function (q) {
+      if (seenSays[q.p + q.at] || mySays[q.p]) return;
+      seenSays[q.p + q.at] = 1; planeBusy = Date.now();
+      if (now - q.at < 12000 && OP.say && LINES[q.n]) { OP.say(q.k, LINES[q.n]); if (!document.hidden) sfx('say'); }
+    });
+  }
+  function say(key, n) {
+    if (!OP.say || key == null) return;
+    var pid = Math.random().toString(36).slice(2, 12);
+    OP.say(key, LINES[n]); sfx('say'); mySays[pid] = 1; planeBusy = Date.now();
+    if (api && LIVE) post({ action: 'say', p: pid, k: key, n: n }, function () {});
+  }
   function toEngine(e) { // server event to engine event, in Amsterdam wall time
+    var w0 = wall(Date.now() + skew), d0 = new Date(w0), day0 = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate());
     var w = wall(e.at), d = new Date(w), y = d.getUTCFullYear(), m = d.getUTCMonth(), dd = d.getUTCDate();
-    return { id: String(e.at), k: e.k, day: y + '-' + (m + 1) + '-' + dd, s: (w - Date.UTC(y, m, dd)) / 1000, f: e.f };
+    var o = { id: String(e.at), k: e.k, day: y + '-' + (m + 1) + '-' + dd, s: (w - Date.UTC(y, m, dd)) / 1000, f: e.f };
+    if (e.k === 'res') { // somebody who came in before midnight is simply here today
+      if (w < day0) { o.day = d0.getUTCFullYear() + '-' + (d0.getUTCMonth() + 1) + '-' + d0.getUTCDate(); o.s = 0; }
+      o.r = e.r; o.n = e.n; o.sd = e.sd; o.g = e.g; o.out = e.out ? Math.max(o.s + 1, (wall(e.out) - day0) / 1000) : null;
+      o.id = 'r' + e.r + '.' + e.at + '.' + e.n + '.' + e.sd + (e.out ? 'o' : '');
+    }
+    return o;
   }
   function syncEvents(quiet) { // quiet: events already there at the first load make no sound
     var cut = Date.now() + skew - 3 * 3600000;
     locEv = locEv.filter(function (e) { return e.at > cut; });
-    var all = srvEv.concat(locEv), key = all.map(function (e) { return e.k + e.at + ':' + e.f; }).join(',');
+    var all = srvEv.concat(locEv, resEv), key = all.map(function (e) { return e.k + e.at + ':' + e.f + (e.k === 'res' ? e.r + '.' + e.n + '.' + e.sd + '.' + e.out : ''); }).join(',');
     all.forEach(function (e) { var id = e.k + e.at; if (!evSeen[id]) { evSeen[id] = 1; if (!quiet) sfx(e.k); } });
     if (key === evKey) return;
     evKey = key;
@@ -79,21 +131,33 @@
     args.id = me;
     fetch('api.php', { method: 'POST', body: new URLSearchParams(args) }).then(function (r) { return r.json(); }).then(function (j) { apply(j); done(j); }).catch(fail || function () {});
   }
+  // a button that has to wait shows it: it is disabled and fills back up over the seconds it takes.
+  // The end time is kept, so a reload does not forget it.
+  function cool(id, sec) {
+    var b = $(id), end = Date.now() + sec * 1000, at = new Date(wall(end + skew));
+    if (!(sec > 0)) return;
+    store('office-cd-' + id, end);
+    b.disabled = true; b.classList.remove('cool'); b.style.setProperty('--cd', sec + 's'); void b.offsetWidth; b.classList.add('cool');
+    if (!b.t0) b.t0 = b.title;
+    b.title = 'Ready again at ' + ('0' + at.getUTCHours()).slice(-2) + ':' + ('0' + at.getUTCMinutes()).slice(-2);
+    clearTimeout(b.cd); b.cd = setTimeout(function () { b.disabled = false; b.classList.remove('cool'); b.title = b.t0; }, sec * 1000);
+  }
+  ['bell', 'pizza', 'party'].forEach(function (id) { var left = (+store('office-cd-' + id) - Date.now()) / 1000; if (left > 0 && left < 3600) cool(id, left); });
+  function mins(j) { return Math.max(1, Math.ceil((j.wait || 60) / 60)); }
   $('bell').onclick = function () {
-    var b = $('bell'); b.disabled = true; setTimeout(function () { b.disabled = false; }, 30000);
-    post({ action: 'bell' }, function (j) { toast(j.rang ? 'Ding dong! Everyone watching sees your visitor.' : 'Someone just rang. Try again in a bit.'); });
+    post({ action: 'bell' }, function (j) { cool('bell', j.rang ? 60 : 20); toast(j.rang ? 'Ding dong! Everyone watching sees your visitor.' : 'Someone just rang. Try again in a bit.'); });
   };
   $('pizza').onclick = function () {
     post({ action: 'pizza' }, function (j) {
-      if (!j.ok) { toast('The last pizza is still warm. Try again in ' + Math.max(1, Math.ceil((j.wait || 60) / 60)) + ' min.'); return; }
-      toast('Pizza is on its way to the cafe!');
+      if (!j.ok) { cool('pizza', j.wait || 60); toast('The last pizza is still warm. Try again in ' + mins(j) + ' min.'); return; }
+      cool('pizza', 1800); toast('Pizza is on its way to the cafe!');
       if (fol == null) setTv(true); // the TV camera will find the pizza
     });
   };
   $('party').onclick = function () {
     post({ action: 'party' }, function (j) {
-      if (!j.ok) { toast('The confetti is still being swept up. Try again in ' + Math.max(1, Math.ceil((j.wait || 60) / 60)) + ' min.'); return; }
-      toast('Party! Everyone in the tower is dancing.');
+      if (!j.ok) { cool('party', j.wait || 60); toast('The confetti is still being swept up. Try again in ' + mins(j) + ' min.'); return; }
+      cool('party', 1200); toast('Party! Everyone in the tower is dancing.');
     });
   };
   var liftLocal = 0, liftOk;
@@ -110,7 +174,7 @@
   syncEvents(true);
   // poll every 10 s, or every 2.5 s while others are watching or planes are flying
   (function loop() { beat(); setTimeout(loop, online > 1 || Date.now() - planeBusy < 30000 ? 2500 : 10000); })();
-  function toast(s) { var el = $('toast'); el.textContent = s; el.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(function () { el.style.display = 'none'; }, 3500); }
+  function toast(s, ms) { var el = $('toast'); el.textContent = s; el.classList.remove('open'); void el.offsetWidth; el.classList.add('open'); clearTimeout(toast.h); toast.h = setTimeout(function () { el.classList.remove('open'); }, ms || 3500); }
 
   // ---------------------------------------------------------------- sound: soft synthesized blips, off by default
   var snd = store('office-snd') === '1', AC = null;
@@ -122,11 +186,12 @@
     // iOS only unlocks audio after something plays inside the tap itself
     var b = AC.createBuffer(1, 1, 22050), src = AC.createBufferSource(); src.buffer = b; src.connect(AC.destination); src.start(0);
   }
+  function press(id, on) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-pressed', on ? 'true' : 'false'); }
   function setSnd(on) {
-    snd = on; store('office-snd', on ? '1' : '0'); $('snd').classList.toggle('on', on);
+    snd = on; store('office-snd', on ? '1' : '0'); press('snd', on);
     if (on) audio(function () { sfx('ding'); toast('Sound on. On a phone, check that silent mode is off.'); }); else hum(0);
   }
-  $('snd').classList.toggle('on', snd);
+  press('snd', snd);
   $('snd').onclick = function () { setSnd(!snd); };
   // a stored preference can only start audio after a user gesture
   window.addEventListener('pointerdown', function () { if (snd) audio(); });
@@ -167,6 +232,7 @@
     else if (k === 'whoosh') noise(0.35, 0.025, 900, 2400);
     else if (k === 'step') noise(0.03, 0.03, 300, 300);
     else if (k === 'plane') noise(0.5, 0.02, 2200, 600);
+    else if (k === 'say') { tone(740, 0, 0.07, 0.05, 'square'); tone(990, 0.07, 0.09, 0.04, 'square'); }
     else if (k === 'boo') { tone(520, 0, 0.12, 0.08, 'square'); tone(780, 0.08, 0.18, 0.06, 'square'); }
   }
 
@@ -187,11 +253,13 @@
       var k = g / 255 * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(k)), f = k - i;
       return [0, 1, 2].map(function (c) { return Math.round(stops[i][c] + (stops[i + 1][c] - stops[i][c]) * f); });
     });
-    $('pal').textContent = PALS[pal][0];
-    var dark = LUT[4], light = LUT[0];
-    document.documentElement.style.setProperty('--bg', 'rgb(' + dark.join(',') + ')');
-    document.documentElement.style.setProperty('--bar', 'rgb(' + dark.map(function (v) { return Math.round(v * 0.7); }).join(',') + ')');
-    document.documentElement.style.setProperty('--ink', 'rgb(' + light.join(',') + ')');
+    var dark = LUT[4], light = LUT[0], bar = dark.map(function (v) { return Math.round(v * 0.7); }), rgb = function (c) { return 'rgb(' + c.join(',') + ')'; };
+    var mid = light.map(function (v, k) { return Math.round(bar[k] + (v - bar[k]) * 0.62); }), css = document.documentElement.style, cols = PALS[pal][1], n = cols.length;
+    css.setProperty('--bg', rgb(dark)); css.setProperty('--bar', rgb(bar)); css.setProperty('--ink', rgb(light)); css.setProperty('--mid', rgb(mid));
+    // the button shows the palette itself
+    $('paln').textContent = PALS[pal][0]; $('pal').title = 'Colours: ' + PALS[pal][0] + '. Click for the next.';
+    $('sw').style.background = 'linear-gradient(90deg,' + cols.map(function (c, k) { return c + ' ' + (k * 100 / n) + '% ' + ((k + 1) * 100 / n) + '%'; }).join(',') + ')';
+    var tc = document.querySelector('meta[name=theme-color]'); if (tc) tc.content = rgb(bar);
   }
   $('pal').onclick = function () { pal = (pal + 1) % PALS.length; store('office-pal', pal); makeLut(); };
   makeLut();
@@ -220,30 +288,55 @@
   // ---------------------------------------------------------------- camera: TV mode follows the action, follow a person, or drag and scroll yourself
   var FLOOR = q.get('floor'), cam = FLOOR != null ? parseFloat(FLOOR) : null, tv = cam == null, idle = tv ? 0 : Date.now() + 240000, top = 16; // ?floor=5 starts there
   var fol = null, lastSc = null; // the key of the person being followed, and the last scene drawn
-  function setTv(on) { tv = on; $('tv').classList.toggle('on', on); }
+  function setTv(on) { tv = on; press('tv', on); if (on) jump = null; }
   setTv(tv);
   function toggleTv() { var on = !tv; closeCard(); setTv(on); }
   $('tv').onclick = toggleTv;
   // the camera glides on a soft spring towards whatever it watches; a flick keeps it moving for a moment
   var vcam = 0, glideV = 0, DT = 1 / 30;
-  function ease(target) { var acc = (target - cam) * 22 - vcam * 9.4; vcam += acc * DT; cam += vcam * DT; if (Math.abs(target - cam) < 0.002 && Math.abs(vcam) < 0.01) { cam = target; vcam = 0; } }
-  function nudge(df) { closeCard(); setTv(false); idle = Date.now(); vcam = 0; cam = Math.max(-2, Math.min(top, (cam || 0) + df)); }
+  // the spring only ever sees a target a little ahead, which gives it a top speed (floors a second):
+  // a long way becomes a steady pan that starts and stops softly, not a whip
+  function ease(target, vmax) { var lead = (vmax || 5) * 9.4 / 22, to = cam + Math.max(-lead, Math.min(lead, target - cam)), acc = (to - cam) * 22 - vcam * 9.4; vcam += acc * DT; cam += vcam * DT; if (Math.abs(target - cam) < 0.002 && Math.abs(vcam) < 0.01) { cam = target; vcam = 0; } }
+  var jump = null; // a floor the rail sent the camera to
+  function nudge(df) { closeCard(); setTv(false); idle = Date.now(); vcam = 0; jump = null; cam = Math.max(-2, Math.min(top, (cam || 0) + df)); }
   function coast() { if (!glideV) return; cam = Math.max(-2, Math.min(top, cam + glideV * DT)); glideV *= Math.exp(-3.2 * DT); if (Math.abs(glideV) < 0.02 || cam <= -2 || cam >= top) glideV = 0; }
 
   // the card: who is this person and what are they doing
   var card = $('card'), cardT = 0;
-  function follow(key) { fol = key; if (OP.follow) OP.follow(key); if (key != null) setTv(false); }
-  function closeCard() { card.style.display = 'none'; if (fol != null) { follow(null); idle = Date.now(); } }
+  function follow(key) { fol = key; if (OP.follow) OP.follow(key); if (key != null) { setTv(false); jump = null; } }
+  function closeCard() { card.classList.remove('open'); setSay(false); if (fol != null) { follow(null); idle = Date.now(); } }
   function showWho(key, gone) {
     cardT = Date.now();
-    if (gone) { $('cw').textContent = 'Left the building'; $('cx').textContent = ''; card.style.display = 'block'; return; }
+    var mine = key != null && key === meKey && !gone; card.classList.toggle('mine', mine); $('rename').hidden = $('relook').hidden = !mine;
+    card.classList.toggle('following', key != null && !gone); sayKey = gone ? null : key; $('saybtn').hidden = sayKey == null; if (sayKey == null) setSay(false);
+    if (gone) { $('cw').textContent = 'Left the building'; $('cx').textContent = ''; card.classList.add('open'); return; }
     var w = OP.who ? OP.who(key) : null;
     if (!w) return;
     $('cn').textContent = w.name || ''; $('cr').textContent = w.role || ''; $('cw').textContent = w.now || ''; $('cx').textContent = w.next || '';
-    card.style.display = 'block';
+    card.classList.add('open');
   }
+  // the portrait is the person themselves, cut out of the tower and blown up, so it moves along with them
+  var por = $('por'), pctx = por.getContext('2d'), porHit = null;
+  function portrait() {
+    var L = (lastSc && lastSc.b.hits) || [], h = porHit, i;
+    if (fol != null) for (i = L.length - 1; i >= 0; i--) if (L[i].key === fol) { h = porHit = L[i]; break; }
+    if (!h || !card.classList.contains('open')) return;
+    var sx = Math.round((h.x + h.x2) / 2) - 8, sy = h.y2 + 2 - 24, col = LUT[0];
+    pctx.fillStyle = 'rgb(' + col.join(',') + ')'; pctx.fillRect(0, 0, 16, 24);
+    pctx.drawImage(art, sx, sy, 16, 24, 0, 0, 16, 24);
+  }
+  // put a line in their mouth: everyone watching sees it
+  var sayKey = null, lines = $('lines');
+  function setSay(on) { lines.hidden = !on; $('saybtn').setAttribute('aria-expanded', on ? 'true' : 'false'); $('saybtn').classList.toggle('on', on); }
+  LINES.forEach(function (t, n) { var bt = document.createElement('button'); bt.textContent = t; bt.onclick = function () { say(sayKey, n); setSay(false); }; lines.appendChild(bt); });
+  $('saybtn').onclick = function () { setSay(lines.hidden); };
+  // your own resident: another name or another look, as often as you like
+  $('rename').onclick = function () { post({ action: 'me', n: Math.floor(Math.random() * 1000) }, function () {}); };
+  $('relook').onclick = function () { post({ action: 'me', sd: Math.floor(Math.random() * 100000) }, function () {}); };
   $('cardx').onclick = closeCard;
   card.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+  card.addEventListener('wheel', function (e) { e.stopPropagation(); }, { passive: true }); // the list of lines scrolls by itself, the tower stays put
+  card.addEventListener('pointermove', function (e) { e.stopPropagation(); });
   card.addEventListener('pointerup', function (e) { e.stopPropagation(); });
 
   // which person or lift door is under the pointer, in art pixels
@@ -257,31 +350,35 @@
   }
   // hovering shows a name; a double click gives somebody a fright
   var tip = document.createElement('div'); tip.id = 'tip'; stage.appendChild(tip);
+  function torch(e) { if (!OP.torch) return; var r = cv.getBoundingClientRect(); if (r.width < 1) return; OP.torch((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H); torch.t = Date.now(); }
   function hover(e) {
+    torch(e);
     var h = hit(e), w = h && h.p && OP.who ? OP.who(h.p.key) : null, sr = stage.getBoundingClientRect();
     stage.classList.toggle('hot', !!h);
     if (!w || !w.name) { tip.style.display = 'none'; return; }
     tip.textContent = w.name; tip.style.display = 'block';
     tip.style.left = Math.min(sr.width - tip.offsetWidth - 4, e.clientX - sr.left + 12) + 'px'; tip.style.top = Math.max(4, e.clientY - sr.top - 26) + 'px';
   }
-  stage.addEventListener('pointerleave', function () { tip.style.display = 'none'; });
+  stage.addEventListener('pointerleave', function () { tip.style.display = 'none'; if (OP.torch) OP.torch(null); });
   var lastClick = { t: 0, key: null };
   function click(e) {
     var h = hit(e), now = Date.now();
     if (h && h.p && h.p.key != null && h.p.key === lastClick.key && now - lastClick.t < 400) { if (OP.poke) OP.poke(h.p.key); sfx('boo'); lastClick.t = 0; return; }
     lastClick = { t: now, key: h && h.p ? h.p.key : null };
     if (h && h.p) {
-      closeCard();
+      closeCard(); porHit = h.p;
       if (h.p.key != null) { follow(h.p.key); showWho(h.p.key, OP.locate ? OP.locate(h.p.key) == null : false); }
       else showWho(h.p.key, false);
+      portrait();
     } else if (h && h.l) callLift(h.l.f);
     else {
       closeCard();
       var r = cv.getBoundingClientRect(), ax = (e.clientX - r.left) / r.width * W, ay = (e.clientY - r.top) / r.height * H;
       if (OP.plane && ay < H - 12) {
         var px = Math.round(ax) - 6, py = Math.round(ay) - 4, pd = ax < W / 2 ? 1 : -1, pid = Math.random().toString(36).slice(2, 12);
-        OP.plane(px, py, cam, pd); sfx('plane'); myPlanes[pid] = 1; planeBusy = Date.now();
-        if (api && LIVE) post({ action: 'plane', p: pid, x: (px / W).toFixed(4), y: py, c: cam.toFixed(3), d: pd }, function () {});
+        var land = OP.plane(px, py, cam, pd), args = { action: 'plane', p: pid, x: (px / W).toFixed(4), y: py, c: cam.toFixed(3), d: pd }; sfx('plane'); myPlanes[pid] = 1; planeBusy = Date.now();
+        if (land) { args.lf = land.f; args.lk = land.k; } // it stays where it comes down, for everybody
+        if (api && LIVE) post(args, function () {});
       }
     }
   }
@@ -293,6 +390,8 @@
     var df = -e.deltaY / (FH * S) * (window.devicePixelRatio || 1);
     nudge(df * 0.5); glideV = Math.max(-12, Math.min(12, glideV + df * 9));
   }, { passive: false });
+  var mouseIn = false; stage.addEventListener('pointerenter', function (e) { mouseIn = e.pointerType === 'mouse'; }); stage.addEventListener('pointerleave', function () { mouseIn = false; });
+  function pinchIdle() { return !Object.keys(pts).length; }
   var down = null, dragging = false, dragY = 0, dragV = 0, dragT = 0, pts = {}, pinch = 0; // a press only becomes a drag after 6 CSS px
   function pdist() { var k = Object.keys(pts); return k.length < 2 ? 0 : Math.hypot(pts[k[0]].x - pts[k[1]].x, pts[k[0]].y - pts[k[1]].y); }
   stage.addEventListener('pointerdown', function (e) {
@@ -302,6 +401,7 @@
   });
   stage.addEventListener('pointermove', function (e) {
     if (pts[e.pointerId]) pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (e.pointerType !== 'mouse') torch(e); // a finger carries the torch too, and it lingers a moment
     if (pinch) { var d = pdist(); if (d > pinch * 1.3) { zoom(1); pinch = d; } else if (d < pinch / 1.3) { zoom(-1); pinch = d; } return; }
     if (!down) { if (e.pointerType === 'mouse') hover(e); return; }
     if (!dragging) { if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6) return; dragging = true; stage.classList.add('drag'); tip.style.display = 'none'; }
@@ -311,14 +411,67 @@
   function lift(e) { delete pts[e.pointerId]; if (Object.keys(pts).length < 2) pinch = 0; }
   stage.addEventListener('pointerup', function (e) { lift(e); if (down && !dragging) click(e); else if (dragging && performance.now() - dragT < 120) glideV = Math.max(-14, Math.min(14, dragV)); down = null; dragging = false; stage.classList.remove('drag'); });
   stage.addEventListener('pointercancel', function (e) { lift(e); down = null; dragging = false; stage.classList.remove('drag'); });
-  window.addEventListener('keydown', function (e) { if (e.key === 'ArrowUp') { glideV = 0; nudge(0.5); } if (e.key === 'ArrowDown') { glideV = 0; nudge(-0.5); } if (e.key === '+' || e.key === '=') zoom(1); if (e.key === '-') zoom(-1); if (e.key === 't') toggleTv(); if (e.key === 'Escape') closeCard(); });
+  window.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'ArrowUp') { glideV = 0; nudge(0.5); } if (e.key === 'ArrowDown') { glideV = 0; nudge(-0.5); }
+    if (e.key === '+' || e.key === '=') zoom(1); if (e.key === '-') zoom(-1); if (e.key === 't') toggleTv(); if (e.key === '?') setHelp(help.hidden);
+    if (e.key === 'Escape') { if (!help.hidden) setHelp(false); else closeCard(); }
+  });
   $('fs').onclick = function () { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); };
+
+  // ---------------------------------------------------------------- how it works: a panel behind the ? button, and one line for a first visit
+  var help = $('help');
+  function setHelp(on) { help.hidden = !on; $('q').classList.toggle('on', on); $('q').setAttribute('aria-expanded', on ? 'true' : 'false'); if (on) store('office-seen', '1'); }
+  $('q').onclick = function () { setHelp(help.hidden); };
+  $('helpx').onclick = function () { setHelp(false); $('q').focus(); };
+  stage.addEventListener('pointerdown', function () { setHelp(false); });
+  if (!store('office-seen')) setTimeout(function () {
+    if (store('office-seen')) return;
+    store('office-seen', '1'); var tap = window.matchMedia && matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click';
+    toast(tap + ' anyone to follow them. ' + tap + ' the air to throw a paper plane.', 9000);
+  }, 2500);
+
+  // nobody touching anything while the TV runs: the buttons step back
+  var touched = Date.now();
+  ['pointermove', 'pointerdown', 'keydown', 'wheel'].forEach(function (k) { window.addEventListener(k, function () { touched = Date.now(); document.body.classList.remove('idle'); }, { passive: true }); });
+  setInterval(function () { if (tv && help.hidden && Date.now() - touched > 8000) document.body.classList.add('idle'); }, 1000);
+
+  // ---------------------------------------------------------------- the floor rail: where you are in the tower, and a way to get somewhere else
+  var rail = $('rail'), ticks = $('ticks'), thumb = $('thumb'), railno = $('railno'), railTop = null, railKey = '', railT = 0, railDrag = false, LO = -2, STEP = 8;
+  function buildRail() {
+    [].slice.call(ticks.querySelectorAll('i')).forEach(function (t) { ticks.removeChild(t); });
+    for (var f = top; f >= LO; f--) { var t = document.createElement('i'); if (f === 0) t.className = 'lobby'; ticks.appendChild(t); }
+    railTop = top; rail.setAttribute('aria-valuemin', LO); rail.setAttribute('aria-valuemax', top);
+  }
+  function drawRail() {
+    if (railTop !== top) buildRail();
+    // the frame around the floors in view: the camera looks at the middle of floor cam
+    var span = H / FH, a = Math.max(LO - 0.4, cam + 0.5 - span / 2), b = Math.min(top + 1.4, cam + 0.5 + span / 2), f = Math.max(LO, Math.min(top, Math.round(cam)));
+    var y0 = Math.round((top + 1 - b) * STEP) - 4, y1 = Math.round((top + 1 - a) * STEP) - 4, key = y0 + ',' + y1 + ',' + f;
+    if (key === railKey) return;
+    if (railKey && !tv) railT = Date.now(); // it shows while you move, like a scrollbar
+    railKey = key;
+    thumb.style.top = y0 + 'px'; thumb.style.height = Math.max(6, y1 - y0) + 'px';
+    var label = f === -1 ? 'Street' : f === LO ? 'Basement' : String(OP.num ? OP.num(f) : f);
+    railno.textContent = label; railno.style.top = (8 + (y0 + y1) / 2) + 'px';
+    rail.setAttribute('aria-valuenow', f); rail.setAttribute('aria-valuetext', f >= 0 ? 'Floor ' + label : label);
+  }
+  function railGo(e) { var r = ticks.getBoundingClientRect(), f = top - (e.clientY - r.top - 1) / STEP; closeCard(); setTv(false); idle = Date.now(); glideV = 0; jump = Math.max(LO, Math.min(top, f)); }
+  rail.addEventListener('pointerdown', function (e) { e.stopPropagation(); e.preventDefault(); railDrag = true; rail.setPointerCapture(e.pointerId); railGo(e); });
+  rail.addEventListener('pointermove', function (e) { e.stopPropagation(); if (railDrag) railGo(e); });
+  ['pointerup', 'pointercancel'].forEach(function (k) { rail.addEventListener(k, function (e) { e.stopPropagation(); railDrag = false; }); });
+  rail.addEventListener('wheel', function () { railT = Date.now(); }, { passive: true });
+  rail.addEventListener('keydown', function (e) { if (e.key === 'Home' || e.key === 'End') { closeCard(); setTv(false); idle = Date.now(); glideV = 0; jump = e.key === 'Home' ? top : LO; e.preventDefault(); } });
+  // near the right edge it shows too, so you can find it
+  stage.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse' && stage.getBoundingClientRect().right - e.clientX < 56) railT = Date.now(); });
 
   // ---------------------------------------------------------------- the loop: about 30 frames a second
   var last = 0;
   function frame(ts) {
     requestAnimationFrame(frame);
-    if (ts - last < 31 || document.hidden) return;
+    // 60 frames a second while the camera moves, 30 while it rests: the people walk a pixel a frame anyway
+    var moving = vcam || glideV || dragging || jump != null || Date.now() - touched < 400;
+    if (last && (ts - last < (moving ? 14 : 31) || document.hidden)) return;
     DT = Math.min(0.1, (ts - last) / 1000);
     if (!img || cv.width !== W * S) resize();
     if (!img) return;
@@ -334,8 +487,8 @@
     top = sc.top;
     if (cam == null) { cam = sc.pick; sc = OP.scene((o.focus = cam, o)); }
     lastSc = sc;
-    if (tv) ease(sc.pick);
-    else if (fol == null) coast();
+    if (tv) ease(sc.pick, 2.2);
+    else if (fol == null) { if (jump != null) { ease(jump); if (cam === jump) jump = null; } else coast(); }
     else if (fol != null) { var lf = OP.locate ? OP.locate(fol) : null; if (lf != null) ease(lf); if (Date.now() - cardT >= 250) showWho(fol, OP.locate && lf == null); }
     var car = sc.M && sc.M.car;
     var view = H / FH / 2 + 0.5, inView = function (f) { return f != null && Math.abs(f - cam) <= view; };
@@ -343,18 +496,30 @@
     if (snd && AC && AC.state === 'running') {
       var M = sc.M || {}, busy = 0;
       if (M.on) for (var fl in M.on) if (inView(+fl) && OP.locate) busy += M.on[fl].filter(function (o) { return o.s && o.s.at === 'desk'; }).length;
-      if (M.office && Math.random() < Math.min(0.5, busy * 0.03) * 0.4) sfx('tick');
+      if (M.office && Math.random() < Math.min(0.5, busy * 0.03) * 12 * DT) sfx('tick');
       // zoomed in, you hear footsteps
-      if (ZOOM > 0) { var walkers = (sc.b.hits || []).filter(function (h) { return h.pose === 'walk'; }).length; if (walkers && Math.random() < Math.min(0.4, walkers * 0.08)) sfx('step'); }
+      if (ZOOM > 0) { var walkers = (sc.b.hits || []).filter(function (h) { return h.pose === 'walk'; }).length; if (walkers && Math.random() < Math.min(0.4, walkers * 0.08) * 30 * DT) sfx('step'); }
       var vac = M.cleaner && inView(M.cleaner.floor), lift = car && car.dir && !car.open && inView(car.f);
       hum(vac ? 0.035 : lift ? 0.02 : 0, vac ? 95 : 60);
     }
     var p = sc.b.p, data = img.data;
     for (var i = 0, n = W * H; i < n; i++) { var col = LUT[p[i]], k = i * 4; data[k] = col[0]; data[k + 1] = col[1]; data[k + 2] = col[2]; data[k + 3] = 255; }
     actx.putImageData(img, 0, 0);
-    ctx.drawImage(art, 0, 0, W * S, H * S);
+    // the tower is shifted by what the camera has left over of a pixel row (in screen pixels, so it stays
+    // sharp); the row at the edge is repeated into the gap, and the news bar does not move at all
+    var hs = sc.hs || H, off = Math.round((sc.sub || 0) * S);
+    ctx.drawImage(art, 0, 0, W, hs, 0, off, W * S, hs * S);
+    if (off > 0) ctx.drawImage(art, 0, 0, W, 1, 0, 0, W * S, off);
+    else if (off < 0) ctx.drawImage(art, 0, hs - 1, W, 1, 0, hs * S + off, W * S, -off);
+    if (hs < H) ctx.drawImage(art, 0, hs, W, H - hs, 0, hs * S, W * S, (H - hs) * S);
     var hh = c.d.getUTCHours(), mm = c.d.getUTCMinutes(), ss = c.d.getUTCSeconds(), pad = function (v) { return (v < 10 ? '0' : '') + v; };
-    $('clock').textContent = pad(hh) + ':' + pad(mm) + ':' + pad(ss) + (travel != null || SPEED > 1 ? ' (time travel)' : '');
+    var clk = pad(hh) + ':' + pad(mm) + ':' + pad(ss);
+    if (clk !== frame.clk) { frame.clk = clk; $('clock').textContent = clk; }
+    drawRail(); rail.classList.toggle('show', railDrag || Date.now() - railT < 1800);
+    portrait();
+    if (meKey && LIVE && !frame.met && OP.who) { var mw = OP.who(meKey); if (mw && mw.name) { frame.met = true; if (!store('office-res')) { store('office-res', '1'); setTimeout(function () { toast('You live here now. You are ' + mw.name + ': look for YOU.', 8000); }, 12500); } } }
+    if (OP.torch && torch.t && pinchIdle() && Date.now() - torch.t > 4000 && !mouseIn) { OP.torch(null); torch.t = 0; }
   }
-  requestAnimationFrame(frame);
+  if (travel != null || SPEED > 1) $('mode').textContent = 'Time travel';
+  frame(performance.now()); // the first frame right away, so the page never starts empty
 })();

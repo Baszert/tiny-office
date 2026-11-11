@@ -36,10 +36,16 @@ Static strategy, there is no data source. `src/shared.liquid` draws the tower fr
 
 A running version of the tower in `web/`. Everything follows the clock in Amsterdam, so everyone sees the same tower at the same moment.
 
+- **Nobody jumps:** whoever has to be somewhere else walks there, speeding up and slowing down. People sit down and get up in a few frames, the cast of a room walks in and out through the lift, and the street is crossed from edge to edge by walkers, dogs, cyclists and at night a fox.
 - **Smooth motion:** people walk with eased steps, stretch, shift their weight and cast a shadow. The lift settles with a bounce and its doors open with a ding. Lights flicker off floor by floor in the evening, the sky changes colour at sunset, mugs steam, plants sway, and the news types itself out.
-- **Look around:** scroll or drag with inertia, flick to glide, zoom with `+`/`-`, ctrl+scroll or a pinch. TV mode glides through the tower on its own.
-- **Click a person** to see who they are and follow them through the tower. Double click to poke them.
+- **Look around:** scroll or drag with inertia (the camera moves in screen pixels, finer than the art), flick to glide, zoom with `+`/`-`, ctrl+scroll or a pinch. TV mode glides through the tower on its own. A floor rail on the right shows where you are and takes you to any floor.
+- **The panel:** pixel icons drawn from rows of dots like the tower itself, in the colours of the palette you pick. A button that has to wait fills back up while it does. `?` explains what you can click.
+- **Click a person** to see who they are and follow them through the tower. Their card shows a live portrait, cut out of the tower. Double click to poke them.
 - **Click a lift door** to send a visitor up. **Pizza** brings a courier to the cafe and a dozen hungry colleagues. **Party** gets the whole tower dancing, with confetti.
+- **You live here.** Everybody watching gets a resident of their own: they walk in through the lobby when you open the page, hang around on their floor, and go home when you leave. Yours carries a YOU sign, and from their card you can roll another name or another look. Names and looks are numbers into fixed lists, so nobody can write anything.
+- **The tower remembers.** A paper plane stays where it lands, confetti stays on the floor after a party, pizza boxes pile up next to the bar. The cleaner takes it all away in the evening, floor by floor. The news counts along.
+- **In the dark, your pointer is a torch.** There are mice. You only see them where light falls.
+- **People talk.** Two who stand next to each other strike up a conversation now and then, a line at a time. From somebody's card you can also put a line in their mouth, picked from a fixed list, and everyone watching sees them say it.
 - **Click anywhere else** to throw a paper plane. Everyone watching sees it fly.
 - Sound is off until you switch it on: footsteps when zoomed in, the lift, the doorbell, planes and parties.
 - URL options: `?name=ACME`, `?t=23:30`, `?d=2026-12-31`, `?speed=60`, `?egg=snow`, `?floor=5` (start at a floor, by index).
@@ -53,6 +59,9 @@ A running version of the tower in `web/`. Everything follows the clock in Amster
 | Pizza | once per 10 min | once per 30 min |
 | Party | once per 5 min | once per 20 min |
 | Paper plane | 40 in the air | 4 per 10 s |
+| Make somebody say a line | 24 in 12 s | 3 per 12 s |
+
+Planes that landed are kept for 20 hours (80 at most), pizza and parties for 20 hours, the counters of the day until midnight in Amsterdam. Residents are kept by the random id of a browser, for 30 days after it was last seen; others only ever get a short hash of that id.
 
 It stores no IP addresses, only a short-lived salted hash. Without PHP the page still runs, without the shared events.
 
@@ -64,6 +73,11 @@ dev/shoot.sh && python3 dev/verify.py   # screenshots at device size, then check
 node dev/preview.mjs                # dev/out/preview.html: scrub through the day, pick a day, scene and device
 dev/egg.sh ghost 21:30              # close-up of one scene (ufo, cat, stuck, raccoon, robot, pizza, ghost, dino, boom, diver, launch, strike, parrot, door, thirteen, kaiju, secret, outage, flood, snow, bday, broken, washer)
 python3 dev/icon_free.py            # icon.svg (render icon.png from it at 512x512)
+node dev/test/smoke.mjs             # draws the tower 14,000 times, live and the TRMNL way, and fails on any error
+node dev/test/anim.mjs 2026-11-05 11:55 18   # watches 18 minutes frame by frame: nobody may jump, pop up, slide or moonwalk
+node dev/test/chat.mjs 2026-11-05 10:00 5       # lists every line spoken in the tower
+node dev/test/who.mjs 9.9 2026-11-05 12:11:10   # follows one person: where they are and what they do
+node dev/test/strip.mjs out.png 2026-11-05 11:59:59 0,176,480,50 9 1.5 2 1   # a film strip of one part of the tower
 php -S localhost:8795 -t web        # the live site, locally
 ```
 
@@ -76,7 +90,7 @@ node dev/web.mjs                    # web/office.js from src/shared.liquid
 node dev/dist.mjs                   # web/trmnl/office-<hash>.js and the TRMNL markup in dev/dist
 ```
 
-1. Upload `index.html`, `office.js`, `live.js`, `api.php` and the `data/` folder (with its `.htaccess`) to a PHP host. `data/` must be writable by PHP.
+1. Upload `index.html`, `.htaccess`, `office.js`, `live.js`, `api.php`, `icon.png`, `og.png` and the `data/` folder (with its `.htaccess`) to a PHP host. `data/` must be writable by PHP.
 2. Upload `web/trmnl/office-<hash>.js` (and `web/trmnl/.htaccess`) to `/office/trmnl/`.
 3. Push the plugin: `(cd dev/dist && trmnlp push -f)`.
 

@@ -5,55 +5,204 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tiny Office Live</title>
 <meta name="description" content="A pixel office tower that lives along with the clock in Amsterdam. Everyone sees the same tower at the same time.">
+<meta name="theme-color" content="#0e0e0e">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Tiny Office Live">
+<meta property="og:description" content="A pixel office tower that lives along with the clock in Amsterdam. Everyone sees the same tower at the same time.">
+<meta property="og:image" content="https://trmnl.achtnegen.nl/office/og.png">
+<meta property="og:url" content="https://trmnl.achtnegen.nl/office/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap">
 <style>
-  :root { --bg: #111; --ink: #eee; --bar: #000; }
+  /* Everything sits on the pixel grid of the type: Silkscreen is sharp at 16px, with 2px strokes.
+     So text is 16px, lines and frames are 2px, and spacing goes in steps of 4 and 8. The three
+     colours follow the palette of the tower (live.js sets them). */
+  :root { --bg: #141414; --bar: #0e0e0e; --ink: #f2f2ee; --mid: #9a9a97; --bar-h: 48px; --step: steps(4, end); }
+  * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; }
-  body { font-family: 'Silkscreen', ui-monospace, monospace; font-size: 13px; -webkit-font-smoothing: none; }
-  #stage { position: absolute; inset: 0 0 40px 0; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+  body { font: 16px/16px 'Silkscreen', ui-monospace, monospace; -webkit-font-smoothing: none; font-smooth: never; text-transform: uppercase; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+  ::selection { background: var(--ink); color: var(--bar); }
+  [hidden] { display: none !important; }
+  svg.i { width: 18px; height: 18px; flex: none; fill: currentColor; shape-rendering: crispEdges; display: block; }
+
+  /* ------------------------------------------------------------ the tower */
+  #stage { position: absolute; inset: 0 0 var(--bar-h) 0; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; overflow: hidden; }
   #stage.hot { cursor: pointer; }
   #stage.drag { cursor: grabbing; }
   canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
-  #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: var(--bar); display: flex; align-items: center; gap: 6px; padding: 0 10px; box-sizing: border-box; white-space: nowrap; }
-  #bar .t { margin-right: auto; overflow: hidden; text-overflow: ellipsis; }
-  #bar button { flex-shrink: 0; }
-  #bar b { font-weight: normal; opacity: .6; }
-  button { font: inherit; color: var(--ink); background: transparent; border: 1px solid currentColor; padding: 4px 8px; cursor: pointer; }
-  button:hover { background: rgba(255,255,255,.12); }
-  button:disabled { opacity: .35; cursor: default; }
+  /* the lights come on in four steps; the tower is there from the start */
+  #c { animation: lights-on .5s var(--step); }
+  @keyframes lights-on { from { filter: brightness(.3); } }
+
+  /* one frame for everything that floats over the tower: a 2px line with a 2px gap around it */
+  .frame { background: var(--bar); border: 2px solid var(--ink); box-shadow: 0 0 0 2px var(--bar); }
+
+  #tip { position: absolute; display: none; pointer-events: none; background: var(--ink); color: var(--bar); padding: 2px 6px 4px; white-space: nowrap; box-shadow: 0 0 0 2px var(--bar); }
+
+  /* ------------------------------------------------------------ who is this: the card of the person you follow */
+  #card { position: absolute; left: 16px; top: 16px; width: min(336px, calc(100% - 72px)); display: none; grid-template-columns: auto 1fr; gap: 12px; padding: 8px; cursor: default; animation: pop .2s var(--step) both; }
+  #card.open { display: grid; }
+  #por { width: 48px; height: 72px; background: var(--bg); border: 2px solid var(--mid); image-rendering: pixelated; image-rendering: crisp-edges; }
+  #card .n { padding-right: 28px; }
+  #card .r, #card #cx { color: var(--mid); }
+  #card .txt > div { line-height: 24px; margin-top: -4px; overflow-wrap: anywhere; }
+  #card .txt > div:empty { display: none; }
+  #card .txt > .tag { display: none; align-items: center; gap: 6px; margin-top: 4px; color: var(--mid); }
+  #card.following .txt > .tag { display: flex; }
+  #sayrow { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+  #sayrow > button { height: 28px; }
+  #lines { flex-basis: 100%; }
+  #card .tag .you { display: none; }
+  #card.mine .tag .you { display: inline; }
+  #card.mine .tag .fol { display: none; }
+  #saybtn { height: 28px; }
+  #saybtn[hidden] + #lines { display: none; }
+  #lines { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; max-height: min(232px, 38vh); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: thin; scrollbar-color: var(--ink) var(--bar); padding-right: 4px; }
+  #lines[hidden] { display: none; }
+  #lines button { height: 28px; padding: 0 6px 2px; border-color: var(--mid); }
+  #lines button:hover { border-color: var(--ink); }
+  #cardx { position: absolute; right: 4px; top: 4px; width: 28px; height: 28px; padding: 0; border: 0; justify-content: center; }
+
+  /* ------------------------------------------------------------ the floor rail: the scrollbar of the tower, shown while you move */
+  #rail { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 24px; padding: 8px 0; cursor: ns-resize; opacity: 0; transition: opacity .3s var(--step); touch-action: none; }
+  #rail.show, #rail:hover, #rail:focus-visible { opacity: 1; }
+  #ticks { position: relative; }
+  #ticks i { display: block; height: 2px; width: 8px; margin: 0 auto 6px; background: var(--mid); }
+  #ticks i:last-child { margin-bottom: 0; }
+  #ticks i.lobby { width: 16px; background: var(--ink); }
+  #thumb { position: absolute; left: 2px; right: 2px; border: 2px solid var(--ink); pointer-events: none; }
+  #railno { position: absolute; right: 30px; background: var(--ink); color: var(--bar); padding: 2px 6px 4px; white-space: nowrap; pointer-events: none; box-shadow: 0 0 0 2px var(--bar); transform: translateY(-50%); }
+
+  /* ------------------------------------------------------------ messages */
+  /* answers to the buttons come up right above them; on a phone the card lives there, so they go to the top */
+  #toast { position: absolute; z-index: 3; left: 16px; right: 16px; bottom: calc(var(--bar-h) + 36px); width: fit-content; max-width: min(560px, calc(100% - 32px)); margin: 0 auto; background: var(--ink); color: var(--bar); padding: 6px 12px 8px; line-height: 24px; text-align: center; text-wrap: balance; box-shadow: 0 0 0 2px var(--bar); display: none; pointer-events: none; }
+  #toast.open { display: block; animation: pop-up .2s var(--step) both; }
+  @keyframes pop { from { opacity: 0; transform: translateY(-8px); } }
+
+  /* ------------------------------------------------------------ how it works */
+  #help { position: absolute; z-index: 2; right: 8px; bottom: calc(var(--bar-h) + 8px); width: min(420px, calc(100% - 16px)); max-height: calc(100% - var(--bar-h) - 16px); overflow: auto; padding: 12px; animation: pop-up .2s var(--step) both; scrollbar-width: thin; scrollbar-color: var(--mid) var(--bar); }
+  @keyframes pop-up { from { opacity: 0; transform: translateY(8px); } }
+  #help h1 { font: inherit; margin: 0 0 12px; padding-right: 28px; }
+  #help dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; line-height: 24px; }
+  #help dt { color: var(--mid); white-space: nowrap; }
+  #help dd { margin: 0; }
+  #help p { margin: 12px 0 0; color: var(--mid); line-height: 24px; }
+  #helpx { position: absolute; right: 4px; top: 4px; width: 28px; height: 28px; padding: 0; border: 0; justify-content: center; }
+
+  /* ------------------------------------------------------------ the panel under the tower */
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; height: var(--bar-h); background: var(--bar); border-top: 2px solid var(--ink); display: flex; align-items: center; gap: 16px; padding: 0 8px; white-space: nowrap; }
+  #ident { display: flex; align-items: center; gap: 8px; margin-right: auto; min-width: 0; }
+  #ident .dot, .tag .dot { width: 8px; height: 8px; flex: none; background: var(--ink); animation: blink 2s steps(1, end) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  #mode { color: var(--mid); }
+  #clock { font-variant-numeric: tabular-nums; }
+  #who { display: flex; align-items: center; gap: 6px; color: var(--mid); margin-left: 8px; }
+  .grp { display: flex; align-items: center; gap: 4px; transition: opacity .6s var(--step); }
+  .grp + .grp { padding-left: 16px; border-left: 2px solid var(--mid); }
+  body.idle .grp { opacity: .4; }
+
+  button { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 32px; min-width: 32px; padding: 0 8px 2px; font: inherit; text-transform: inherit; color: var(--ink); background: transparent; border: 2px solid var(--ink); border-radius: 0; cursor: pointer; overflow: hidden; touch-action: manipulation; }
+  button svg.i { margin-bottom: -2px; }
+  button:hover { background: color-mix(in srgb, var(--ink) 20%, transparent); }
+  button:active { transform: translateY(2px); }
+  button:focus-visible, #rail:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   button.on { background: var(--ink); color: var(--bar); }
-  #toast { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: var(--bar); border: 1px solid var(--ink); padding: 6px 12px; display: none; }
-  #card { position: absolute; left: 10px; top: 10px; max-width: 260px; background: var(--bar); border: 1px solid var(--ink); padding: 6px 30px 6px 10px; line-height: 1.5; display: none; cursor: default; pointer-events: auto; }
-  #card .n { font-size: 16px; }
-  #tip { position: absolute; display: none; pointer-events: none; background: var(--bar); color: var(--ink); border: 1px solid var(--ink); padding: 2px 6px; white-space: nowrap; }
-  #card .r { opacity: .7; }
-  #card #cardx { position: absolute; right: 3px; top: 3px; border: 0; padding: 0 6px; font-size: 16px; line-height: 1.2; }
-  .narrow { display: none; }
-  @media (max-width: 560px) {
-    .wide { display: none; }
-    .narrow { display: inline; }
-    #bar { gap: 4px; padding: 0 6px; font-size: 12px; }
-    button { padding: 4px 5px; }
+  button.on:hover { background: color-mix(in srgb, var(--ink) 80%, var(--bar)); }
+  button:disabled { color: var(--mid); border-color: var(--mid); cursor: default; transform: none; background: transparent; }
+  /* a button that has to wait fills back up while it does */
+  button.cool::after { content: ''; position: absolute; inset: 0; background: color-mix(in srgb, var(--ink) 28%, transparent); transform-origin: left; animation: cool var(--cd, 10s) linear both; }
+  @keyframes cool { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+  .grp.view button { padding: 0 5px 0; justify-content: center; }
+  .grp.view button svg.i { margin: 0; }
+  #sw { width: 18px; height: 18px; border: 2px solid currentColor; flex: none; }
+  #snd .off, #snd.on .onn { display: block; }
+  #snd .onn, #snd.on .off { display: none; }
+
+  /* labels go when the panel gets tight; the icons and their titles stay */
+  @media (max-width: 1000px) { .l { display: none; } button { padding: 0 5px; justify-content: center; } button svg.i { margin: 0; } }
+  @media (max-width: 720px) { #who .l2, #mode { display: none; } }
+  @media (max-width: 600px) {
+    :root { --bar-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
+    #bar { gap: 8px; padding: 0 8px env(safe-area-inset-bottom, 0px); justify-content: center; }
+    .grp { flex: 1; gap: 4px; }
+    .grp + .grp { padding-left: 8px; }
+    .grp button { flex: 1; height: 44px; min-width: 0; max-width: 56px; }
+    #fs { display: none; }
+    /* the clock moves up into a corner of the tower */
+    #ident { position: fixed; left: calc(8px + env(safe-area-inset-left, 0px)); top: calc(8px + env(safe-area-inset-top, 0px)); margin: 0; padding: 4px 8px 6px; background: var(--bar); border: 2px solid var(--ink); box-shadow: 0 0 0 2px var(--bar); pointer-events: none; }
+    #card { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; animation-name: pop-up; }
+    #toast { top: calc(56px + env(safe-area-inset-top, 0px)); bottom: auto; }
+    #toast.open { animation-name: pop; }
+    #help { left: 8px; right: 8px; width: auto; }
+    #rail { right: 4px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #c, #card, #toast.open, #help { animation: none; }
+    #ident .dot, .tag .dot { animation: none; }
+    .grp, #rail { transition: none; }
   }
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="c"></canvas>
-  <div id="card"><button id="cardx" title="Stop following">&times;</button><div class="n" id="cn"></div><div class="r" id="cr"></div><div id="cw"></div><div id="cx"></div></div>
-</div>
-<div id="toast"></div>
-<div id="bar">
-  <span class="t"><span class="wide">Tiny Office <b>live</b> </span><span id="clock"></span> <span id="who" class="wide"></span></span>
-  <button id="tv" class="on" title="Follow what happens">TV</button>
-  <button id="bell" title="Ring the doorbell, everyone watching sees it" hidden>Ring</button>
-  <button id="pizza" title="Order pizza for the whole tower, everyone watching sees it" hidden>Pizza</button>
-  <button id="party" title="Throw a party in the whole tower, everyone watching sees it" hidden>Party</button>
-  <button id="pal" title="Change colours">Ink</button>
-  <button id="snd" title="Sound on or off"><span class="wide">Sound</span><span class="narrow">Snd</span></button>
-  <button id="fs" class="wide" title="Full screen">Full</button>
-</div>
-<script src="office.js"></script>
-<script src="live.js"></script>
+<main id="stage">
+  <canvas id="c" role="img" aria-label="The Tiny Office tower, live"></canvas>
+  <aside id="card" class="frame" aria-live="polite">
+    <canvas id="por" width="16" height="24" aria-hidden="true"></canvas>
+    <div class="txt">
+      <div class="n" id="cn"></div><div class="r" id="cr"></div><div id="cw"></div><div id="cx"></div>
+      <div class="tag"><i class="dot"></i><span class="fol">Following</span><span class="you">This is you</span></div>
+    </div>
+    <button id="cardx" data-i="close" title="Stop following" aria-label="Stop following"></button>
+    <div id="sayrow">
+      <button id="saybtn" data-i="say" title="Put a line in their mouth. Everyone watching sees it." aria-expanded="false" aria-controls="lines"><span>Make them say</span></button>
+      <button id="rename" title="Give yourself another name" hidden>New name</button>
+      <button id="relook" title="Give yourself another look" hidden>New look</button>
+      <div id="lines" hidden></div>
+    </div>
+  </aside>
+  <div id="rail" class="frame" role="slider" tabindex="0" aria-label="Floor" aria-orientation="vertical">
+    <div id="ticks"><div id="thumb"></div></div>
+    <output id="railno"></output>
+  </div>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<section id="help" class="frame" aria-label="How it works" hidden>
+  <h1>Poke around the tower</h1>
+  <button id="helpx" data-i="close" title="Close" aria-label="Close"></button>
+  <dl>
+    <dt>Click a person</dt><dd>See who they are, follow them, and make them say something</dd>
+    <dt>Double click</dt><dd>Give them a fright</dd>
+    <dt>Click a lift door</dt><dd>Send a visitor up to that floor</dd>
+    <dt>Click the air</dt><dd>Throw a paper plane</dd>
+    <dt>Drag or scroll</dt><dd>Look around, or use the arrow keys</dd>
+    <dt>Pinch, + or -</dt><dd>Zoom in and out</dd>
+    <dt>T</dt><dd>TV mode: the camera finds the action</dd>
+    <dt>In the dark</dt><dd>Your pointer is a torch. Look around</dd>
+    <dt>You</dt><dd>You live here too. Look for the YOU sign</dd>
+  </dl>
+  <p>The doorbell, lift, pizza, parties, paper planes and what you make people say are shared. Everyone watching sees them, and the tower remembers: planes stay where they land until the cleaner comes by.</p>
+</section>
+<footer id="bar">
+  <div id="ident"><i class="dot"></i><span id="mode">Live</span><time id="clock"></time><span id="who" hidden><svg class="i" data-i="person"></svg><span><span id="whon"></span><span class="l2"> watching</span></span></span></div>
+  <div class="grp do" role="group" aria-label="Do something in the tower">
+    <button id="bell" data-i="bell" title="Ring the doorbell. Everyone watching sees your visitor." aria-label="Ring the doorbell" hidden><span class="l">Ring</span></button>
+    <button id="pizza" data-i="pizza" title="Order pizza for the whole tower. Everyone watching sees it." aria-label="Order pizza" hidden><span class="l">Pizza</span></button>
+    <button id="party" data-i="party" title="Throw a party in the whole tower. Everyone watching sees it." aria-label="Throw a party" hidden><span class="l">Party</span></button>
+  </div>
+  <div class="grp view" role="group" aria-label="View">
+    <button id="tv" data-i="tv" class="on" title="TV mode: the camera finds the action (T)" aria-label="TV mode" aria-pressed="true"></button>
+    <button id="pal" title="Change colours" aria-label="Change colours"><i id="sw"></i><span class="l" id="paln"></span></button>
+    <button id="snd" title="Sound on or off" aria-label="Sound" aria-pressed="false"><svg class="i onn" data-i="sound"></svg><svg class="i off" data-i="mute"></svg></button>
+    <button id="fs" data-i="full" title="Full screen" aria-label="Full screen"></button>
+    <button id="q" data-i="help" title="How it works (?)" aria-label="How it works" aria-expanded="false"></button>
+  </div>
+</footer>
+<noscript><p style="position:absolute;inset:0;display:grid;place-items:center;margin:0">Tiny Office Live needs JavaScript.</p></noscript>
+<script src="office.js?v=b9241a5e31"></script>
+<script src="live.js?v=a7e24df0aa"></script>
 </body>
 </html>

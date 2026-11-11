@@ -1,0 +1,6 @@
+# The page itself is always checked for a newer version; its scripts are asked for by hash (see dev/web.mjs).
+<IfModule mod_headers.c>
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>

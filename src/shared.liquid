@@ -49,7 +49,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
 
   // ------------------------------------------------------------ bitmap
   // `lock` marks light sources (windows, screens); shading a dark room skips them.
-  function Bmp(w, h) { this.w = w; this.h = h; this.p = new Uint8Array(w * h); this.lock = new Uint8Array(w * h); this.locking = false; this.figs = []; this.hits = []; this.lifts = []; this.clip = null; this.wins = []; this.fy = 0; this.late = null; this.out = false; } // every field up front: one shape, fast px()
+  function Bmp(w, h) { this.w = w; this.h = h; this.p = new Uint8Array(w * h); this.lock = new Uint8Array(w * h); this.locking = false; this.figs = []; this.hits = []; this.said = []; this.lifts = []; this.clip = null; this.wins = []; this.fy = 0; this.late = null; this.out = false; } // every field up front: one shape, fast px()
   Bmp.prototype.px = function (x, y, t) { x |= 0; y |= 0; var c = this.clip; if (c && (x < c[0] || y < c[1] || x >= c[2] || y >= c[3])) return; if (x >= 0 && y >= 0 && x < this.w && y < this.h) { var i = y * this.w + x; this.p[i] = t; if (this.locking) this.lock[i] = 1; } };
   Bmp.prototype.shade = function (x, y, w, h, map) { for (var j = Math.max(0, y); j < Math.min(this.h, y + h); j++) for (var i = Math.max(0, x); i < Math.min(this.w, x + w); i++) { var q = j * this.w + i; if (!this.lock[q]) this.p[q] = map[this.p[q]]; } };
   Bmp.prototype.rect = function (x, y, w, h, t) { for (var j = 0; j < h; j++) for (var i = 0; i < w; i++) this.px(x + i, y + j, t); };
@@ -211,6 +211,32 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     if (fit === 'dress' && !/long|bun|curly/.test(p.head)) fit = 'hoodie';
     var BS = fit === 'dress' ? BD : B2, head = H2[p.head], body = BS[pose || 'stand'];
     var flip = false, md = p.mood || autoMood(p), bob = 0, fright = -1;
+    if (LIVE && !b.clip && (p.key || p.seat != null) && feetY <= b.fy && feetY > b.fy - 30) {
+      // live: nobody jumps. Whoever is drawn somewhere else than a moment ago walks there,
+      // and sitting down or getting up takes a few frames.
+      var mid = keyOf(p), sm = SMOOTH[mid], sdt = sm ? SEC - sm.s : 0, sx = x, sy = feetY - b.fy;
+      if (sm && sm.f === CURF && sdt > 0 && sdt < 1.5) {
+        var gap = x - sm.x, lim = sdt * PACE * 1.5, gy = sy - sm.y, ly = sdt * 45;
+        if (Math.abs(gap) > Math.max(lim, 2)) { sx = sm.x + Math.sign(gap) * lim; sy = -2; x = Math.round(sx); feetY = b.fy - 2; pose = 'walk'; body = BS.walk; if (extra !== 'mug' && extra !== 'drink' && extra !== 'boxes') extra = null; }
+        else if (Math.abs(gy) > ly && Math.abs(gy) <= 10) { sy = sm.y + Math.sign(gy) * ly; feetY = b.fy + Math.round(sy); }
+      }
+      SMOOTH[mid] = { x: sx, y: sy, s: SEC, f: CURF };
+    } else if (LIVE && !b.clip && !NOCAST && p.id && SCENE && GATE != null && feetY <= b.fy && feetY > b.fy - 30) {
+      // live: the people who belong to a room do not pop up in it. A new face walks in from the lift
+      // (in the lobby: from the door), and whoever is no longer needed walks out again: see leavers().
+      var ek = CURF + ':' + p.id, en = CAST[ek], seen = FSEEN[CURF] != null && SEC - FSEEN[CURF] > 0 && SEC - FSEEN[CURF] < 0.25;
+      if (!en || en.out != null || (en.s !== SEC && (SEC < en.s || SEC - en.s > 0.25))) en = CAST[ek] = { f: CURF, from: en && en.out != null ? en.x : GATE, t0: seen ? SEC : null };
+      else if (en.s !== SEC && en.t0 == null && Math.abs(x - en.x) > 8) { en.from = en.x; en.t0 = SEC; } // their spot moved: they walk over
+      if (en.t0 != null) {
+        var cd = Math.abs(x - en.from), ce = SEC - en.t0;
+        if (ce * PACE < cd - 1) { x = Math.round(en.from + Math.sign(x - en.from) * travel(ce, cd)); feetY = b.fy - 2; pose = 'walk'; body = BS.walk; if (extra !== 'mug' && extra !== 'drink') extra = null; }
+        else en.t0 = null;
+      }
+      // sitting down, climbing on something: a few frames, not a hop
+      var ty = feetY - b.fy, cy = en.y == null || en.s === SEC ? ty : en.y, cl = Math.max(0, SEC - en.s) * 45;
+      if (Math.abs(ty - cy) > cl && Math.abs(ty - cy) <= 14) { cy += Math.sign(ty - cy) * cl; feetY = b.fy + Math.round(cy); } else cy = ty;
+      en.s = SEC; en.x = x; en.y = cy; en.p = p;
+    }
     if (LIVE && POKE && !b.clip) {
       // live: double-clicked, a little jump and a startled face
       var pkey = p.key || (p.seat != null ? p.floor + '.' + p.seat : 'x:' + (SCENE ? SCENE.type : '') + ':' + (p.id || [p.head, p.hair, p.skin, p.shirt, p.pants].join('')));
@@ -223,8 +249,8 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
       if (pose === 'walk') { var fr = Math.floor(x / 3) & 3; body = fr & 1 ? BS.pass : BS.walk; flip = fr === 2; bob = fr & 1 ? 0 : 1; }
       // now and then a wave, and people talk in the busy rooms
       else if (pose === 'stand' && !extra && ((SEC / (17 + id % 29) + id * 0.618) % 1) < 0.05) body = BS.wave;
-      else if (pose === 'type') body = ((SEC / (40 + id % 23) + id * 0.31) % 1) < 0.04 ? BS.stretch : (SEC * 5 + id) % 2 < 1 ? BS.typeA : BS.typeB;
-      else if (pose === 'stand' && !extra && ((SEC / 3.1 + id * 0.17) % 1) < 0.18) body = BS.pass; // shifting weight
+      else if (pose === 'type') body = ((SEC / (40 + id % 23) + id * 0.31) % 1) < 0.04 ? BS.stretch : ((SEC / (5 + id % 7) + id * 0.23) % 1) < 0.22 ? BS.typeA : (SEC * (4 + id % 5 * 0.45) + id * 0.7) % 2 < 1 ? BS.typeA : BS.typeB; // everybody types at their own speed, and stops to think
+      else if (pose === 'stand' && !extra && ((SEC / (2.7 + id % 9 * 0.4) + id * 0.17) % 1) < 0.16) body = BS.pass; // shifting weight
       if (!p.mood && !/laugh|love|sleepy|angry/.test(md || '') && SCENE && /cafe|meeting|game|lobby|roof|bowling|street/.test(SCENE.type) && ((SEC / 7 + id * 0.37) % 1) < 0.4) md = Math.floor(SEC * 4 + id) % 2 ? 'o' : null;
     }
     if (pose === 'stand' && extra === 'phone' && body === BS.stand) body = BS.phone;
@@ -234,7 +260,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     map.B = BROW[p.hair]; map.w = p.shirt === T.W ? T.PALE : T.W; map.x = shd(p.shirt); map.X = T.K;
     // 1-bit screens: skin is white and one-pixel shading turns into noise, so those details stay plain
     if (ONEBIT) { map.b = map.S = p.skin; map.H = p.hair; map.D = p.shirt; map.P = p.pants; map.y = T.K; } else { map.b = map.S = SHADE[p.skin]; map.H = GLOW[p.hair]; map.D = SHADE[p.shirt]; map.P = SHADE[p.pants]; map.y = T.MID; }
-    if (LIVE && ((SEC + id % 97 * 0.31) % 4.3) < 0.14) map.e = p.skin; // blink
+    if (LIVE) { var bl = (SEC + id % 97 * 0.31) % (3.3 + id % 11 * 0.27); if (bl < 0.13 || (id % 4 === 0 && bl > 0.3 && bl < 0.4)) map.e = p.skin; } // blink, some people twice
     if (feetY === b.fy - 2 && !b.clip) b.hline(x, feetY, 12, T.MID); // a little shadow on the floor
     b.spr(body, x, by, map, flip);
     if (bob) { hy += bob; b.spr(head, x, hy, map); } else b.spr(head, x, hy, map);
@@ -263,6 +289,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
       // live: what you can click on, and an arrow over whoever you follow
       var key = p.key || (p.seat != null ? p.floor + '.' + p.seat : 'x:' + (SCENE ? SCENE.type : '') + ':' + (p.id || [p.head, p.hair, p.skin, p.shirt, p.pants].join('')));
       b.hits.push({ x: x, y: hy - 2, x2: x + 12, y2: feetY + 1, key: key, f: CURF, p: p, room: SCENE ? SCENE.type : '', pose: pose, extra: extra });
+      if (key && key === ME && key !== FOLLOW && !b.clip) { b.locking = true; b.rect(x - 1, hy - 10, 15, 8, T.W); b.box(x - 1, hy - 10, 15, 8, T.K); text(b, 'YOU', x + 2, hy - 8, T.K); b.px(x + 6, hy - 2, T.K); b.locking = false; } // that is you
       if (key && key === FOLLOW && !b.clip) { b.locking = true; b.spr(['ooooooo', 'oWWWWWo', '.oWWWo.', '..oWo..', '...o...'], x + 3, hy - 9 - (Math.floor(SEC * 3) % 2), { o: T.K, W: T.W }); b.locking = false; }
     }
     return hy;
@@ -299,11 +326,15 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
 
   function ph(v, perSec) { return LIVE ? SEC * perSec : v; } // a phase: hours on the TRMNL, seconds live
   function wrap(v, span) { return ((v % span) + span) % span; }
-  // live: somebody who strolls between spots in [0, span], pausing at each; the same for every viewer
+  // live: somebody who strolls between spots in [0, span], pausing at each; the same for every viewer.
+  // The spots lie on a grid of 8 px, never further apart than a walk at PACE fits in the time. So a
+  // stroll is a real walk that speeds up and slows down, or standing still: never a creep or a dash.
   function stroll(key, span, per) {
-    var h = hash(key), q = SEC / per + (h % 1000) / 1000, seg = Math.floor(q), u = q - seg;
-    var A = hash(key + '|' + (seg - 1)) % (span + 1), B = hash(key + '|' + seg) % (span + 1), walk = u < 0.35 && A !== B;
-    return { x: Math.round(walk ? A + (B - A) * u / 0.35 : B), walk: walk };
+    var h = hash(key), q = SEC / per + (h % 1000) / 1000, seg = Math.floor(q), e = (q - seg) * per;
+    var g = Math.min(8, Math.max(1, span)), n = Math.max(1, Math.floor(span / g)), steps = Math.max(1, Math.min(n, Math.floor(PACE * per * 0.55 / g))), m = Math.floor(steps * 0.6), st = steps - m;
+    var at = function (k) { return g * bounce(k * st + hash(key + '|' + k) % (m + 1) + h % 97, n); };
+    var A = at(seg - 1), B = at(seg), D = Math.abs(B - A), walk = D > 0 && e < D / PACE;
+    return { x: Math.round(walk ? A + Math.sign(B - A) * travel(e, D) : B), walk: walk, dir: Math.sign(B - A) };
   }
   function bounce(v, span) { var m = ((v % (2 * span)) + 2 * span) % (2 * span); return m > span ? 2 * span - m : m; }
   function lerp(a, b, k) { return a + (b - a) * Math.max(0, Math.min(1, k)); }
@@ -395,6 +426,8 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     // keep only trips that start where the previous one ended
     var ok = [], loc = 0, free = -1;
     c.forEach(function (tr) { if (tr.from === loc && tr.s0 >= free) { ok.push(tr); loc = tr.to; free = tr.s0 + 100; } });
+    // whoever was somewhere else when it was time to leave (a late meeting, a last coffee) still goes home afterwards
+    if (ok.length && loc !== 0) { var lt2 = ok[ok.length - 1]; ok.push({ s0: Math.max(out0 * 3600, lt2.s0 + 400), from: loc, to: 0, a: lt2.b, b: 'door', mug: false, why: 'home', i: c.length }); }
     return ok;
   }
   function callAt(tr) { return tr.now ? tr.s0 : tr.s0 + (tr.a === 'door' ? WALK + 2 : WALK); }
@@ -470,6 +503,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     if (kind === 'pizza') return x + w - Math.min(112, Math.max(72, Math.floor(w * 0.58))) - 4;
     if (kind === 'desk') { if (type === 'boss') return x + 53; var n = Math.floor((w - 6) / DESK_W), x0 = x + Math.floor((w - n * DESK_W) / 2); return p.seat < n ? x0 + p.seat * DESK_W + 4 : x + w - 14; }
     if (kind === 'meet') return Math.min(x + w - 16, x + 72 + (p.id % 6) * 22);
+    if (type === 'bowling') return x + 28 + (p.id % 4) * Math.max(1, (APPROACH(w) - 52) >> 2); // nobody stands on the lane
     return Math.min(x + w - 16, x + 34 + (p.id % 6) * 13);
   }
   // live: turn trips into positions. Walkers keep a steady pace; whoever is early stays put
@@ -484,20 +518,20 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
         px = o.slot; pose = 'stand';
         var bu = (s.s - (s.board - 1.2)) / 1.2; if (bu > 0) { px = Math.round(o.slot + (x - 20 - o.slot) * travel(bu * 1.2, 1.2 * PACE) / (1.2 * PACE)); pose = 'walk'; }
       } else if (s.z === 'lift') {
-        A = s.a === 'visit' ? visitX(o.p, type, x, w) : tripX(o.p, s.a, type, x, w); B = o.slot;
+        A = s.a === 'visit' ? then(s.tr.s0, function () { return visitX(o.p, type, x, w); }) : s.a === 'clean' ? then(s.tr.s0, function () { return cleanX(x, w); }) : tripX(o.p, s.a, type, x, w); B = o.slot;
         var dep = s.call - Math.abs(B - A) / PACE;
-        if (s.s < dep - 0.7) { if (!s.home || s.a === 'door') return false; o.s = s.home; return true; }
+        if (s.s < dep - 0.7 && s.a !== 'visit' && s.a !== 'clean') { if (!s.home || s.a === 'door') return false; o.s = s.home; return true; }
         if (s.s < dep) { px = A; pose = 'stand'; }
         else px = Math.round(A + Math.sign(B - A) * travel(s.s - dep, Math.abs(B - A)));
       } else {
-        A = x - 20; B = tripX(o.p, s.z, type, x, w);
+        var rd = RIDERS[keyOf(o.p)]; A = rd && Math.abs(s.s - s.e - rd.s) < 1 ? rd.x : x - 20; // they step out from where they stood in the car
+        B = s.z === 'visit' ? then(s.s - s.e, function () { return visitX(o.p, type, x, w); }) : s.z === 'clean' ? then(s.s - s.e, function () { return cleanX(x, w); }) : tripX(o.p, s.z, type, x, w);
         if (s.e * PACE >= Math.abs(B - A)) { if (s.z === 'door') return false; o.s = s.z === 'pizza' ? { at: 'courier', fl: CURF, since: s.s - s.e + 6 } : s.z === 'visit' ? { at: 'visit', fl: CURF, since: s.s - s.e + 6 } : s.home; return true; } // there: sit down (couriers and visitors take over at once, so they never blink out)
         px = Math.round(A + Math.sign(B - A) * travel(s.e, Math.abs(B - A)));
       }
-      // smooth out little jumps when the queue moves up
-      var id = keyOf(o.p), sm = SMOOTH[id];
-      if (sm && sm.f === CURF && s.s - sm.s > 0 && s.s - sm.s < 1.5 && Math.abs(px - sm.x) < 120) px = Math.round(sm.x + Math.sign(px - sm.x) * Math.min(Math.abs(px - sm.x), (s.s - sm.s) * PACE * 1.5));
-      SMOOTH[id] = { x: px, s: s.s, f: CURF };
+      // somebody who shuffles up in the queue takes a step, they do not slide
+      var sm = SMOOTH[keyOf(o.p)];
+      if (pose === 'stand' && sm && sm.f === CURF && s.s - sm.s > 0 && s.s - sm.s < 1.5 && Math.abs(px - sm.x) > 2) { px = Math.round(sm.x + Math.sign(px - sm.x) * Math.min(Math.abs(px - sm.x), Math.max(1, (s.s - sm.s) * PACE))); pose = 'walk'; }
       o.px = px; o.pose = pose;
       return true;
     });
@@ -510,7 +544,10 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     return D * (u < k ? v * u * u / (2 * k) : u > 1 - k ? 1 - v * (1 - u) * (1 - u) / (2 * k) : v * (u - k / 2));
   }
   // where a visitor strolls, so they leave from where they are
-  function visitX(p, type, x, w) { return Math.min(x + w - 80, Math.max(x + 14, tripX(p, 'visit', type, x, w) - 20)) + stroll(p.key, 60, 7).x; }
+  function APPROACH(w) { return w > 200 ? 74 : 34; } // the bowling alley: where you wait for your turn, before the lane starts
+  function visitX(p, type, x, w) { if (type === 'bowling') return x + 28 + stroll(p.key, Math.max(4, APPROACH(w) - 52), 7).x; return Math.min(x + w - 80, Math.max(x + 14, tripX(p, 'visit', type, x, w) - 20)) + stroll(p.key, 60, 7).x; }
+  function cleanX(x, w) { return x + 28 + stroll('clean' + CURF, w - 70, 11).x; }
+  function then(sec, fn) { var s0 = SEC; SEC = sec; var v = fn(); SEC = s0; return v; } // what something was at another moment
   function bubble(b, x, y, msg) {
     var w = textW(msg) + 6; b.locking = true;
     b.rect(x, y, w, 9, T.W); b.box(x, y, w, 9, T.K); b.px(x + 3, y + 9, T.K); b.px(x + 4, y + 10, T.K); text(b, msg, x + 3, y + 2, T.K);
@@ -522,9 +559,9 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
       // time since they reached their spot: the lift arrived at since - 6, then they walked over
       var s = o.s, k = s.at === 'courier' ? 'pizza' : 'visit', ax = tripX(o.p, k, type, x, w), el = SEC - ((s.since || 0) - 6 + Math.abs(ax - (x - 12)) / PACE);
       if (s.at === 'visit') {
-        var st = stroll(o.p.key, 60, 7), hello = el < 9, vx = visitX(o.p, type, x, w), vw = st.walk;
-        if (el < 2.5) { vx = Math.round(lerp(ax, vx, el / 2.5)); vw = vx !== ax && el > 0; } // from where they came in to where they stroll
-        var hy = bit(b, o.p, vx, fy - 2, hello ? (vw ? 'walk' : 'wave') : vw ? 'walk' : 'stand', hello ? null : 'phone');
+        var st = stroll(o.p.key, 60, 7), hello = el < (o.p.res ? 4 : 9), vx = visitX(o.p, type, x, w), vw = st.walk;
+        var hy = bit(b, o.p, vx, fy - 2, hello ? (vw ? 'walk' : 'wave') : vw ? 'walk' : 'stand', hello || o.p.res ? null : 'phone');
+        if (o.p.res) return; // they live here: no tourist talk
         if (hello) bubble(b, vx + 8, hy - 12, 'HI!');
         else if ((el % 30) < 4) bubble(b, vx + 8, hy - 12, pick(rng(o.p.key + Math.floor(el / 30)), ['WOW', 'NICE', 'SO TINY', 'HELLO?', 'COOL']));
       } else if (s.at === 'courier') {
@@ -534,12 +571,77 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     });
   }
   // live: somebody whose spot changed (a seat in the cafe, a chair at the meeting) walks there
-  function glide(b, p, x, feet, pose, extra, fy) {
-    if (!LIVE || p.seat == null && !p.key) return bit(b, p, x, feet, pose, extra);
-    var id = keyOf(p), sm = SMOOTH[id], nx = x;
-    if (sm && sm.f === CURF && SEC - sm.s > 0 && SEC - sm.s < 1.5 && Math.abs(sm.x - x) > 1) nx = Math.round(sm.x + Math.sign(x - sm.x) * Math.min(Math.abs(x - sm.x), (SEC - sm.s) * PACE));
-    SMOOTH[id] = { x: nx, s: SEC, f: CURF };
-    return nx === x ? bit(b, p, x, feet, pose, extra) : bit(b, p, nx, fy - 2, 'walk', extra === 'drink' ? 'drink' : null);
+  function glide(b, p, x, feet, pose, extra, fy) { return bit(b, p, x, feet, pose, extra); } // bit() walks them there
+  // live: the other half of walking in: an extra who was here a frame ago and is not drawn any more
+  // walks to the lift (or the door) and is gone when they get there
+  var CAST = {}, FSEEN = {}, GATE = null, NOCAST = false;
+  var WALKS = { museum: 1, aquarium: 1, game: 1, bowling: 1, cafe: 1, lobby: 1, office: 1, meeting: 1, library: 1, lab: 1, jungle: 1, podcast: 1, mission: 1, warroom: 1, factory: 1, stocks: 1, disco: 1, dojo: 1, greenhouse: 1, server: 1, boss: 1, wc: 1 };
+  function leavers(b, f, fy) {
+    var seen = FSEEN[f] != null && SEC - FSEEN[f] > 0 && SEC - FSEEN[f] < 0.25;
+    for (var k in CAST) {
+      var en = CAST[k]; if (en.f !== f) continue;
+      if (en.out == null && en.s !== SEC) { if (seen && GATE != null && SEC > en.s && SEC - en.s < 0.25 && Math.abs(en.x - GATE) > 6) { en.out = SEC; en.ox = en.x; en.oy = en.y == null ? -2 : en.y; } else { delete CAST[k]; continue; } }
+      if (en.out != null) {
+        var d = Math.abs(en.ox - GATE), e = SEC - en.out;
+        if (!seen || GATE == null || e < 0 || e * PACE >= d) { delete CAST[k]; continue; }
+        var up = Math.min(-2, en.oy + e * 45), stood = up >= -2 || en.oy > -2; // first down to the floor, then off they go
+        if (!stood) { e = 0; en.out += SEC - (en.ls || en.out); en.x = en.ox; } else en.x = Math.round(en.ox + Math.sign(GATE - en.ox) * travel(e, d));
+        en.ls = SEC; if (!stood) en.oy = up;
+        NOCAST = true; var md = en.p.mood; en.p.mood = null; bit(b, en.p, en.x, stood ? fy - 2 : fy + Math.round(up), stood ? 'walk' : 'stand'); en.p.mood = md; NOCAST = false;
+      }
+    }
+    FSEEN[f] = SEC; GATE = null;
+  }
+  // live: people talk. Two who stand next to each other strike up a conversation now and then, a line
+  // at a time, each in turn. And whoever is watching can put a line in somebody's mouth: see say().
+  var SAYS = [], CHATS = [
+    ['DID YOU SEE THE EMAIL?', 'WHICH ONE?', 'EXACTLY.'],
+    ['COFFEE?', 'ALWAYS.'],
+    ['IS IT FRIDAY YET?', 'IT IS {D}.', 'SO, NO.'],
+    ['NICE WEATHER.', 'WE ARE INDOORS.', 'STILL.'],
+    ['WHO BROKE THE PRINTER?', 'NOT ME.', 'IT WAS YOU.', 'IT WAS ME.'],
+    ['QUICK QUESTION.', 'IS IT QUICK?', 'NO.'],
+    ['I HAVE AN IDEA.', 'OH NO.'],
+    ['LUNCH?', 'IT IS {T}.', 'SO?'],
+    ['YOU ARE ON MUTE.', 'WE ARE NOT IN A CALL.', 'OH.'],
+    ['HAVE YOU SEEN GUS?', 'NOBODY HAS.'],
+    ['LOVE THE JUMPER.', 'IT IS MY ONLY ONE.'],
+    ['THE LIFT IS SLOW.', 'TAKE THE STAIRS.', 'WHAT STAIRS?'],
+    ['MEETING AT THREE.', 'ABOUT WHAT?', 'THE MEETINGS.'],
+    ['I FIXED THE BUG.', 'WHICH ONE?', 'A NEW ONE.'],
+    ['WHOSE MUG IS THIS?', 'GERALD\'S.', 'WHO IS GERALD?', 'DO NOT ASK.'],
+    ['ANY PLANS TONIGHT?', 'SOFA.', 'SOLID PLAN.'],
+    ['DID YOU HEAR THAT?', 'THE AIR DUCTS.', 'THEY MEOWED.'],
+    ['CAN YOU REVIEW THIS?', 'IS IT LONG?', 'IT IS A NOVEL.'],
+    ['WHAT DOES GUS DO?', 'NOBODY KNOWS.'],
+    ['I NEED A HOLIDAY.', 'YOU JUST HAD ONE.', 'I NEED ANOTHER.'],
+    ['PIZZA FRIDAY?', 'PIZZA EVERY DAY.'],
+    ['THE WIFI IS DOWN.', 'TRY THE 13TH FLOOR.', 'THERE IS NONE.', 'EXACTLY.'],
+    ['GOOD MORNING.', 'IS IT?'],
+    ['WHO ATE MY YOGHURT?', 'DEFINE ATE.']
+  ];
+  function talk(b, h0, rx, rw, top, fy, M, quiet) {
+    var L = b.hits.slice(h0).filter(function (h) { return h.x >= rx && h.y2 > fy - 12 && h.y2 <= fy + 1; }), busy = false;
+    var put = function (h, msg, age) { if (age < 0.12) return; var bw = textW(msg) + 6; bubble(b, Math.max(rx + 1, Math.min(rx + rw - bw - 1, h.x + 8)), Math.max(top, h.y - 10 - (age < 0.24 ? -1 : 0)), msg); b.said.push({ key: h.key, msg: msg, f: h.f }); busy = true; };
+    SAYS = SAYS.filter(function (q) { return SEC - q.s >= 0 && SEC - q.s < 5; });
+    SAYS.forEach(function (q) { for (var i = L.length - 1; i >= 0; i--) if (L[i].key === q.key) { put(L[i], q.msg, SEC - q.s); q.shown = SEC; break; } });
+    if (busy || quiet || M.party || M.outage) return; // no small talk in the middle of a kata or a song
+    var st = L.filter(function (h) { return (h.pose === 'stand' || h.pose === 'wave' || !h.pose) && h.extra !== 'phone' && h.extra !== 'boxes' && h.key; }).sort(function (u, v) { return u.x - v.x; });
+    for (var k = 0; k + 1 < st.length && !busy; k++) {
+      var A = st[k], B = st[k + 1], gap = B.x - A.x; if (gap < 11 || gap > 40 || A.key === B.key) continue;
+      var pk = A.key + '|' + B.key, at = SEC + (hash(pk) % 4000) / 100, ep = Math.floor(at / 40), te = at - ep * 40, hh = hash(pk + '#' + ep);
+      if (hh % 100 >= 30) continue;
+      var ci = hash('pick' + ep + pk) % CHATS.length, C = CHATS[ci], li = Math.floor(te / 2.4), hr = Math.floor(M.t);
+      if ((C[1] === 'IT IS {D}.' && CAL.wd === 5) || (C[0] === 'GOOD MORNING.' && M.t >= 12)) C = CHATS[(ci + 1) % CHATS.length]; // not on a Friday, not in the afternoon
+      if (li < C.length) put(li % 2 ? B : A, C[li].replace('{D}', ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][CAL.wd]).replace('{T}', (hr % 12 || 12) + (hr < 12 ? ' AM' : ' PM')), te - li * 2.4);
+    }
+  }
+  // whoever is not in a room (on the roof, in the street, washing windows) can be made to speak too
+  function talkOutside(b, w) {
+    SAYS.forEach(function (q) {
+      if (q.shown === SEC || SEC - q.s < 0.12 || SEC - q.s >= 5) return;
+      for (var i = b.hits.length - 1; i >= 0; i--) if (b.hits[i].key === q.key) { var h = b.hits[i], bw = textW(q.msg) + 6; bubble(b, Math.max(1, Math.min(w - bw - 1, h.x + 8)), Math.max(0, h.y - 10), q.msg); b.said.push({ key: h.key, msg: q.msg, f: h.f }); break; }
+    });
   }
   function tripPeople(b, here, rx) {
     b.late = [];
@@ -563,6 +665,11 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
         var v = look(rng('web' + e.id)); v.mood = 'smile';
         mk('web' + e.id, v, dest, 'A visitor, sent up by someone watching', [tr(e.s, 0, dest, 'door', 'visit', 'visit'), tr(e.s + (AUTO ? 1200 : 150), dest, 0, 'visit', 'door', 'home')],
           function (last, t, since) { return last && last.to ? { at: 'visit', fl: last.to, since: since } : null; });
+      } else if (e.k === 'res') {
+        // somebody watching lives here: they come in when their viewer does, hang around on their floor, and go home when the viewer leaves
+        var home = ok(1 + hash('home' + e.r) % (TOP - 1)), rp = look(rng('res' + e.sd)); rp.res = true; rp.name = NAMES2[e.n % NAMES2.length]; rp.greet = e.g; rp.in0 = e.s; rp.mood = 'smile';
+        var rt = [tr(e.s, 0, home, 'door', 'visit', 'visit')]; if (e.out != null) rt.push(tr(e.out, home, 0, 'visit', 'door', 'home'));
+        mk('res' + e.r, rp, home, 'Lives here. Somebody watching, like you', rt, function (last, t, since) { return last && last.to ? { at: 'visit', fl: last.to, since: since } : null; });
       } else if (e.k === 'pizza') {
         var c = { head: 'cap', hair: T.K, skin: pick(rng('pz' + e.id), SKIN), shirt: T.W, sleeve: T.W, pants: T.DARK, stripes: true, id: hash(e.id) % 1e6 };
         mk('pz' + e.id, c, CAFE, 'Pizza courier', [tr(e.s, 0, CAFE, 'door', 'pizza', 'pizza'), tr(e.s + 140, CAFE, 0, 'pizza', 'door', 'home')],
@@ -773,10 +880,15 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     if (LIVE) here = placeTrips(here.slice(), type, rx, rw);
     var busy = here.filter(function (o) { return o.s.at !== 'guard'; }).length;
     var cleaner = M.cleaner && M.cleaner.floor === f, guard = M.guard && M.guard.floor === f && M.guard.patrol;
+    // live: they are at work from the moment they have walked in, not from when the timetable says so
+    if (LIVE) here.forEach(function (o) { if (o.p.key === 'cleaner' && o.s.at === 'clean') cleaner = true; if (o.p.key === 'guard' && o.s.at === 'guard') guard = true; if (o.p.key === 'guard' && o.s.at === 'rec' && !M.guard) M.guard = { floor: 0, patrol: false }; });
+    GATE = LIVE && WALKS[type] ? (type === 'lobby' ? rx + rw - 26 : rx) : null;
+    var h0 = b.hits.length;
     ROOM[type](b, rx, rw, top, fy, f, here, M, R);
-    if (LIVE) { guests(b, here, type, rx, rw, top, fy, M, R); tripPeople(b, here, rx); }
+    if (LIVE) traces(b, rx, rw, top, fy, f, type, M, R);
+    if (LIVE) { guests(b, here, type, rx, rw, top, fy, M, R); leavers(b, f, fy); tripPeople(b, here, rx); if (type !== 'thirteen') talk(b, h0, rx, rw, top, fy, M, type === 'dojo' || type === 'disco' || type === 'themepark'); }
     var cl = LIVE && cleaner ? stroll('clean' + f, rw - 70, 11) : null;
-    if (cl) { var sec0 = SEC; SEC -= 0.2; cl.left = stroll('clean' + f, rw - 70, 11).x > cl.x; SEC = sec0; cl.x += 18; } // which way the trolley is pushed
+    if (cl) { cl.left = cl.dir < 0; cl.x += 18; } // which way the trolley is pushed
     if (cleaner) cleanerAt(b, rx + 10 + (cl ? cl.x : Math.floor(M.cleaner.k * (rw - 50))), fy - 2, cl);
     if (CAL.deco && type !== 'thirteen' && type !== 'basement') decorate(b, type, rx, rw, top, fy, f, M, R);
     if (M.egg && M.egg.floor === f) EGG[M.egg.kind](b, rx, rw, top, fy, f, M, R);
@@ -797,13 +909,16 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     if (LIVE && !lit && loff > 0 && (M.t - loff) * 3600 >= 0 && (M.t - loff) * 3600 < 1.2) lit = Math.floor(SEC * 9) % 3 !== 0; // the last one out: the tubes buzz off
     if (LIVE && cleaner && !officeOn && M.crewC.since && SEC - M.crewC.since < 2.5) lit = Math.floor(SEC * 7) % 3 === 2; // the cleaner switches the tubes on
     var gx = 0, gl = false;
-    if (guard) { gx = rx + 12 + Math.floor(M.guard.k * (rw - 80)); if (LIVE) { var gq = SEC * 14 + f * 97, gs = rw - 80; gx = rx + 12 + Math.round(bounce(gq, gs)); gl = wrap(gq, 2 * gs) > gs; } }
+    if (guard) { gx = rx + 12 + Math.floor((M.guard ? M.guard.k : 0.5) * (rw - 80)); if (LIVE) { var gq = SEC * 14 + f * 97, gs = rw - 80; gx = rx + 12 + Math.round(bounce(gq, gs)); gl = wrap(gq, 2 * gs) > gs; } }
     if (!lit) {
+      // in the dark there are mice. You only see them where light falls: around somebody working late, or in the torch
+      if (LIVE && type !== 'aquarium' && hash(R.day + 'mouse' + f) % 5 < 2) { var ms = stroll(R.day + 'mouse' + f, Math.max(16, rw - 40), 5), mx0 = rx + 12 + ms.x; b.spr(['.oo...', 'oKKKKo', '.oooo.'], mx0, fy - 4, { o: T.K, K: T.MID }, ms.dir < 0); b.px(ms.dir < 0 ? mx0 + 6 : mx0 - 1, fy - 3, T.K); b.px(ms.dir < 0 ? mx0 + 7 : mx0 - 2, fy - 4, T.K); }
       var before = b.p.slice();
       if (M.outage) for (var oy = top; oy < fy; oy++) b.lock.fill(0, oy * b.w + rx, oy * b.w + rx + rw); // screens go dark too
       b.shade(rx, top, rw, fy - top, NIGHT || M.outage ? DARKEN : DIM);
       if (M.outage) (b.wins || []).forEach(function (wn) { for (var wy2 = wn[1]; wy2 < wn[1] + wn[3]; wy2++) for (var wx2 = wn[0]; wx2 < wn[0] + wn[2]; wx2++) { var wq = wy2 * b.w + wx2; b.p[wq] = before[wq]; } });
       b.figs.forEach(function (g) { pool(b, before, g[0] + 8, g[1], M.outage ? 13 : g[2] || 26, top, fy); });
+      if (TORCH && TORCH.y > top - 20 && TORCH.y < fy + 20 && TORCH.x >= rx) pool(b, before, TORCH.x, TORCH.y, 22, top, fy); // live: your pointer is a torch
       if (M.outage && type === 'server') { var lr2 = rng(R.day + 'leds' + Math.floor(M.t * 60)); for (var ld = 0; ld < 14; ld++) b.px(rx + 10 + Math.floor(lr2() * (rw - 20)), top + 8 + Math.floor(lr2() * 30), T.W); }
       if (guard) guardAt(b, before, gx, fy - 2, top, fy, gl);
     } else if (guard) guardAt(b, null, gx, fy - 2, top, fy, gl);
@@ -848,13 +963,13 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
   }
 
   // live: riders shuffle to their spot in the car instead of jumping there; computed once per frame
-  var RIDE = {};
+  var RIDERS = {}; // not RIDE: that is how long a lift ride takes, and everybody's day is planned with it
   function rideX(o, x) {
-    var k = keyOf(o.p), r = RIDE[k];
+    var k = keyOf(o.p), r = RIDERS[k];
     if (r && r.s === SEC) return r;
     var from = r && SEC - r.s > 0 && SEC - r.s < 1.5 ? r : SMOOTH[k] && SEC - SMOOTH[k].s > 0 && SEC - SMOOTH[k].s < 1.5 ? SMOOTH[k] : null, nx = x;
-    if (from) nx = Math.round(from.x + Math.sign(x - from.x) * Math.min(Math.abs(x - from.x), (SEC - from.s) * PACE * 0.7));
-    return (RIDE[k] = { x: nx, s: SEC, walk: nx !== x });
+    if (from) { var fx = from.fx == null ? from.x : from.fx; nx = fx + Math.sign(x - fx) * Math.min(Math.abs(x - fx), (SEC - from.s) * PACE * 0.7); }
+    return (RIDERS[k] = { x: Math.round(nx), fx: nx, s: SEC, walk: Math.abs(nx - x) > 0.5 });
   }
   // Live: an open shaft. The car rides behind glass landing doors, its cable
   // runs up the shaft; floors and their numbers stay in front of it.
@@ -884,7 +999,8 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
   var ROOM = {};
   ROOM.office = function (b, x, w, top, fy, f, here, M, R) {
     var n = Math.floor((w - 6) / DESK_W), x0 = x + Math.floor((w - n * DESK_W) / 2), dt = fy - 13, gather = [];
-    var roam = function (q) { var span = n * DESK_W - 12, home = Math.min(x0 + span, x0 + q.p.seat * DESK_W + 4), far = q.p.seat < n / 2 ? x0 + span : x0, d = Math.abs(far - home), go = wrap(SEC, 600) * 7; return go < 2 * d ? Math.round(home + Math.sign(far - home) * bounce(go, d)) : null; };
+    // a stroll across the floor: over to the far side at a normal pace, a chat there, and back to the desk
+    var roam = function (q) { var span = n * DESK_W - 12, home = Math.min(x0 + span, x0 + q.p.seat * DESK_W + 4), far = q.p.seat < n / 2 ? x0 + span : x0, d = Math.abs(far - home), sg = Math.sign(far - home), T = d / PACE, e = wrap(SEC, 600) - 4 - (q.p.id % 40), chat = 18 + q.p.id % 25; return e < 0 || e >= 2 * T + chat ? null : e < T ? { x: Math.round(home + sg * travel(e, d)), walk: true } : e < T + chat ? { x: far, walk: false } : { x: Math.round(far - sg * travel(e - T - chat, d)), walk: true }; };
     if (LIVE) here.forEach(function (q) { if (q.s.at === 'walk' && roam(q) == null) q.s = { at: 'desk' }; });
     for (var i = 0; i < n; i++) {
       var dx = x0 + i * DESK_W, o = here.filter(function (q) { return q.p.seat === i && q.s.at === 'desk'; })[0];
@@ -954,7 +1070,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     here.filter(function (q) { return q.s.at === 'walk'; }).forEach(function (q, k) {
       var span = n * DESK_W - 12;
       // live: a stroll from the desk to the far end and back, then back to work
-      bit(b, q.p, LIVE ? roam(q) : x0 + Math.floor(q.p.roam * span), fy - 2, 'walk', k % 2 ? 'papers' : 'mug');
+      var ro = LIVE ? roam(q) : null; bit(b, q.p, ro ? ro.x : x0 + Math.floor(q.p.roam * span), fy - 2, !ro || ro.walk ? 'walk' : 'stand', k % 2 ? 'papers' : 'mug');
     });
     // a paper plane on some quarter hours
     var pr2 = rng(R.day + 'plane' + f + Math.floor(M.t * 4));
@@ -1445,7 +1561,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     var roll = SEC / 6, rn = Math.floor(roll), rq = roll - rn, allDown = hash(R.day + 'roll' + rn) % 3 === 0, hitNow = LIVE && rq > 0.62;
     if (LIVE) strike = open && hitNow && allDown;
     // the lane
-    var lx = x + 34, le = x + w - 30, lend = le + 26;
+    var lx = x + APPROACH(w), le = x + w - 30, lend = le + 26;
     b.rect(lx, fy - 6, lend - lx, 4, T.PALE); b.hline(lx, fy - 6, lend - lx, T.K); for (var bd = lx + 6; bd < lend; bd += 8) b.vline(bd, fy - 5, 3, T.LIGHT);
     b.rect(lx, fy - 2, lend - lx, 1, T.DARK);
     for (var ar = 0; ar < 3; ar++) b.spr(['o.', '.o', 'o.'], lx + 30 + ar * 6, fy - 6, { o: T.K });
@@ -1462,11 +1578,11 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     b.rect(mx, top + 4, mw, 11, T.K); b.locking = open; b.rect(mx + 1, top + 5, mw - 2, 9, open ? T.W : T.DARK); text(b, msg, mx + 5, top + 7, open ? T.K : T.MID); b.locking = false;
     // the ball on its way, the player in follow-through, friends waiting
     if (open) {
-      var bp = x + 20, prog = strike ? 0.98 : (M.t * 12) % 1; if (LIVE) prog = Math.max(0, Math.min(1, (rq - 0.08) / 0.54));
+      var bp = lx - 14, prog = strike ? 0.98 : (M.t * 12) % 1; if (LIVE) prog = Math.max(0, Math.min(1, (rq - 0.13) / 0.49));
       if (!strike && !hitNow) { var bx = lx + 18 + Math.floor(prog * (le - lx - 32)); disc(b, bx, fy - 10, 4, T.DARK, T.K); b.px(bx - 1, fy - 12, T.W); b.px(bx + 1, fy - 12, T.W); }
       var pl = look(rng(R.day + 'bowler' + Math.floor(M.t * 4))); pl.shirt = T.MID; pl.mood = strike ? 'grin' : 'o';
-      bit(b, pl, bp + 4 + (LIVE && rq < 0.08 ? Math.round(rq * 60) - 5 : 0), fy - 2, strike ? 'wave' : LIVE ? (rq < 0.08 ? 'walk' : rq < 0.3 ? 'wave' : 'stand') : 'walk');
-      if (w > 200) { var fr = look(rng(R.day + 'friend' + Math.floor(M.t * 4))); fr.mood = strike ? 'grin' : null; bit(b, fr, lx + 50, fy - 7, strike ? 'wave' : 'stand', 'drink'); }
+      bit(b, pl, bp + 4 - (LIVE ? Math.round(5 * (rq < 0.05 ? rq / 0.05 : rq < 0.13 ? (0.13 - rq) / 0.08 : 0)) : 0), fy - 2, LIVE ? (rq < 0.13 ? 'walk' : strike || rq < 0.3 ? 'wave' : 'stand') : strike ? 'wave' : 'walk'); // live: a step back for the ball, a step up, and the throw
+      if (w > 200) { var fr = look(rng(R.day + 'friend' + Math.floor(M.t * 4))); fr.mood = strike ? 'grin' : null; bit(b, fr, lx - 30, fy - 2, strike ? 'wave' : 'stand', 'drink'); }
     }
     // the ball return with spare balls
     b.rect(x + 4, fy - 9, 18, 7, T.LIGHT); b.box(x + 4, fy - 9, 18, 7, T.K);
@@ -1542,7 +1658,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     var lx = x + Math.floor(w * 0.45); b.vline(lx, top + 8, 6, T.K); b.locking = true; b.rect(lx - 1, top + 14, 3, 3, T.W); b.locking = false; b.box(lx - 1, top + 14, 3, 3, T.K);
     b.figs.push([lx - 8, top + 20, 30]);
     // the archivist, and a rat
-    if (M.office && !M.flood) { var ar = { head: 'bald', hair: T.LIGHT, skin: T.SKIN2, shirt: T.MID, sleeve: T.MID, pants: T.DARK, glasses: true, beard: true }; bit(b, ar, x + 24 + Math.floor(rr() * Math.max(1, ce - x - 60)), fy - 2, 'walk', 'papers'); }
+    if (M.office && !M.flood) { var ar = { head: 'bald', hair: T.LIGHT, skin: T.SKIN2, shirt: T.MID, sleeve: T.MID, pants: T.DARK, glasses: true, beard: true }; var arx = Math.floor(rr() * Math.max(1, ce - x - 60)), arw = LIVE ? stroll(R.day + 'arch', Math.max(8, ce - x - 60), 14) : null; bit(b, ar, x + 24 + (arw ? arw.x : arx), fy - 2, !arw || arw.walk ? 'walk' : 'stand', 'papers'); }
     if (rr() < 0.4 && !M.flood) b.spr(['..oo....', '.oKKoooo', 'oWKKKKKo', '.oooooo.o'], x + 10 + Math.floor(rr() * (w - 60)), fy - 5, { o: T.K, K: T.DARK, W: T.W });
     if (M.flood) {
       var wl = fy - 20, fr = rng(R.day + 'flood' + Math.floor(M.t * 12));
@@ -2092,9 +2208,60 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     if (el < 10) bubble(b, x + Math.floor(w / 2) - 22, top + 3, 'PARTY TIME!');
   }
   // live: paper planes thrown by whoever is watching; they glide across and dip now and then
+  // A plane comes down on the floor of the room it is over after four and a half seconds, and stays
+  // there. What people watching do leaves traces: planes, confetti, pizza boxes. The cleaner takes
+  // them away in the evening, floor by floor.
+  var LITTER = [], MYLIT = [], STATS = null, ME = null, TORCH = null, CAMY = null;
+  function landing(x, y, dir, cam) {
+    if (!CAMY) return null;
+    y += (CAMY.focus - cam) * FLOOR_H; // where it is on screen now, if it was thrown under another camera
+    var fl = Math.ceil((CAMY.bi - (y + 40.5)) / FLOOR_H); if (fl < 0 || fl >= TOP) return null;
+    var rx = EDGE + SHAFT_W, rw = CAMY.w - EDGE - rx, line = CAMY.bi - fl * FLOOR_H + FLOOR_H - 10, t = Math.sqrt(Math.max(1, line - y) / 2);
+    var lx = Math.max(rx + 4, Math.min(rx + rw - 16, x + dir * t * 42));
+    return { f: fl, t: t, x: lx, k: Math.round((lx - rx - 4) / Math.max(1, rw - 20) * 10000) / 10000 };
+  }
   function planes(b, focus) {
-    PLANES = PLANES.filter(function (q) { return SEC - q.s >= 0 && SEC - q.s < 6; });
-    PLANES.forEach(function (q) { var el = SEC - q.s, x = Math.round(q.x + q.dir * el * 42), y = Math.round(q.y + (focus - q.cam) * FLOOR_H + Math.sin(el * 2.5) * 6 + el * el * 2); b.locking = true; plane(b, x, y, q.dir < 0); b.locking = false; });
+    PLANES = PLANES.filter(function (q) {
+      var el = SEC - q.s, life = q.land ? q.land.t : 6; if (el < 0) return false;
+      if (el < life) return true;
+      if (q.land && !q.quiet && el < life + 1) MYLIT.push({ f: q.land.f, k: q.land.k, dir: q.dir, until: SEC + 40 });
+      return false;
+    });
+    MYLIT = MYLIT.filter(function (q) { return SEC < q.until && q.until - SEC < 60; });
+    PLANES.forEach(function (q) {
+      var el = SEC - q.s, L = q.land, x = q.x + q.dir * el * 42, sway = Math.sin(el * 2.5) * 6 * (L ? Math.max(0, 1 - el / L.t) : 1);
+      if (L) x = q.dir > 0 ? Math.min(x, L.x) : Math.max(x, L.x); // at the wall it just drops
+      b.locking = true; plane(b, Math.round(x), Math.round(q.y + (focus - q.cam) * FLOOR_H + sway + el * el * 2), q.dir < 0); b.locking = false;
+    });
+  }
+  function cleanedAt(f, weekday) { // when the cleaner has done this floor, in seconds of the day
+    if (!weekday) return null;
+    for (var k = 0; k < 16; k++) { var cf = Math.max(0, Math.min(TOP - 1, 1 + k % (TOP - 1))); if (cf === SECRET) cf--; if (cf === f) return (17.75 + k * 0.25) * 3600 + 150; }
+    return null;
+  }
+  function swept(f, M, R, day, s) { var c = cleanedAt(f, M.weekday); return c != null && SEC > c && !(day === R.day && s > c); }
+  function traces(b, rx, rw, top, fy, f, type, M, R) {
+    var n = 0;
+    LITTER.concat(MYLIT).forEach(function (q) {
+      if (q.f !== f || n >= 40 || (q.day && swept(f, M, R, q.day, q.s))) return; n++;
+      b.spr(['o......', 'oWoo...', '.oWWoo.', '..ooooo'], rx + 4 + Math.round(q.k * (rw - 20)), fy - 5, { o: T.K, W: T.W }, q.dir < 0);
+    });
+    // confetti stays on the floor after a party
+    if (EVENTS.some(function (e) { return e.k === 'party' && e.day === R.day && SEC >= e.s + 34 && !swept(f, M, R, e.day, e.s); })) {
+      var r = rng('mess' + f);
+      for (var i = 0; i < rw / 4; i++) b.px(rx + 2 + Math.floor(r() * (rw - 4)), fy - 2 - (i % 4 === 0 ? 1 : 0), [T.K, T.W, T.DARK][i % 3]);
+    }
+    // and the pizza boxes pile up next to the bar
+    if (type === 'cafe' && PLAN) {
+      var boxes = 0, bx = rx + rw - Math.min(112, Math.max(72, Math.floor(rw * 0.58))) - 6;
+      EVENTS.forEach(function (e) { var tm = e.k === 'pizza' && e.day === R.day ? PLAN.times['pz' + e.id + '.0'] : null; if (tm && SEC >= tm[1] + 45 && !swept(f, M, R, e.day, e.s)) boxes++; });
+      for (var k = 0; k < Math.min(7, boxes); k++) { b.rect(bx - 17 + (k % 2), fy - 5 - k * 3, 13, 3, T.W); b.box(bx - 17 + (k % 2), fy - 5 - k * 3, 13, 3, T.K); }
+    }
+    // the front desk knows who lives here
+    if (type === 'lobby' && M.all) for (var j = 0; j < M.all.length; j++) {
+      var p = M.all[j].p, age = p.res ? SEC - p.in0 : -1;
+      if (age >= 4 && age < 9) { var msg = ['WELCOME, ', 'HI AGAIN, ', 'LONG TIME NO SEE, '][p.greet || 0] + p.name + '!', bw = textW(msg) + 6; bubble(b, Math.min(rx + rw - bw - 2, rx + Math.floor(rw / 2) + 2), fy - 36, msg); break; }
+    }
   }
   function plane(b, x, y, left) {
     var P = ['oo..........', 'owoo........', 'owwwoo......', '.owwwwwoo...', '.oowwwwwwwoo', '..ooooooooo.', '...oowwo....', '....ooo.....'];
@@ -2260,6 +2427,11 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
 
   function roof(b, y0, w, f, M, R) {
     var fy = y0 + FLOOR_H - 1;
+    b.fy = fy; CURF = f; GATE = LIVE ? EDGE + SHAFT_W + 4 : null; // people come up through the lift house
+    roofTop(b, y0, w, f, M, R, fy);
+    if (LIVE) leavers(b, f, fy);
+  }
+  function roofTop(b, y0, w, f, M, R, fy) {
     b.rect(0, y0, w, FLOOR_H, SKYT); if (GLOWT !== SKYT) { b.rect(0, y0 + 30, w, FLOOR_H - 30, GLOWT); for (var gx3 = 0; gx3 < w; gx3 += 2) b.px(gx3 + ((gx3 >> 1) & 1), y0 + 29, GLOWT); }
     var r = rng('clouds' + R.day);
     if (NIGHT && !isNewYear(M.t)) { for (var s2 = 0; s2 < w / 5; s2++) b.px(Math.floor(r() * w), y0 + Math.floor(r() * 30), T.W); var mx = w - 30, my = y0 + 10; for (var yy = -5; yy <= 5; yy++) for (var xx = -5; xx <= 5; xx++) if (xx * xx + yy * yy <= 25 && (xx - 2) * (xx - 2) + (yy + 1) * (yy + 1) > 16) b.px(mx + xx, my + yy, T.W); }
@@ -2279,7 +2451,8 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     for (var i = 0; i < 3; i++) b.vline(sx + 6 + i * Math.floor((sw - 12) / 2), fy - 12, 7, T.K);
     // someone on a break up here, legs hidden by the parapet; everyone comes up for the fireworks
     var lr = rng(R.day + 'roof' + Math.floor(M.t * 4)), crowd = isNewYear(M.t) ? 3 : (M.office && lr() < 0.3 ? 1 : 0);
-    for (var c = 0; c < crowd; c++) bit(b, look(rng(R.day + 'up' + c)), EDGE + SHAFT_W + 10 + c * 16 + (crowd === 1 ? Math.floor(lr() * (w - 120)) : 0), fy - 2, crowd > 1 ? 'wave' : 'stand', crowd > 1 ? null : 'mug');
+    var upx = Math.floor(lr() * (w - 120)), upw = LIVE && crowd === 1 ? stroll(R.day + 'up', Math.max(8, w - 120), 19) : null;
+    for (var c = 0; c < crowd; c++) bit(b, look(rng(R.day + 'up' + c)), EDGE + SHAFT_W + 10 + c * 16 + (crowd === 1 ? (upw ? upw.x : upx) : 0), fy - 2, crowd > 1 ? 'wave' : upw && upw.walk ? 'walk' : 'stand', crowd > 1 ? null : 'mug');
     // mini golf at lunch: a windmill, a flag and somebody putting
     var gx0 = sx + sw + 10;
     if (M.golf && gx0 + 50 < tx) {
@@ -2341,7 +2514,49 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
 
   // ------------------------------------------------------------ street life
   var DOG = ['.......oo..', 'o.....oKKo.', '.o...oKWKKo', '.oooooKKKoo', '.oKKKKKKo..', '.oKKKKKKo..', '.o.o..o.o..'];
+  // live: the street never jumps either. People cross from edge to edge at their own pace, some stop
+  // to look at their phone, a dog trots along, cyclists ride by with turning wheels, and at night a fox.
+  // Everybody is fixed by the moment they set off, so everyone watching sees the same street.
+  function passers(b, y0, w, R) {
+    var walkY = y0 + 5, lane, j, h, e, dir, v, x;
+    var hour = function (sec) { return wrap(sec / 3600, 24); }, dark = function (th) { return th < 6 || th >= 22; }, rush = function (th) { return (th >= 7.5 && th < 9.5) || (th >= 16.5 && th < 18.5); };
+    // the fox
+    for (j = Math.floor(SEC / 170); j > Math.floor(SEC / 170) - 2; j--) {
+      h = hash(R.day + 'fox' + j); e = SEC - j * 170 - h % 120; dir = (h >>> 7) & 1 ? 1 : -1;
+      if (!dark(hour(j * 170)) || h % 100 >= 45 || e < 0 || e * 46 > w + 40) continue;
+      x = Math.round(dir > 0 ? -20 + e * 46 : w + 20 - e * 46); var hop = Math.floor(x / 4) & 1;
+      b.spr(DOG, x, walkY - 6 - hop, { o: T.K, K: T.MID, W: T.W }, dir < 0); var tx = dir > 0 ? x - 5 : x + 11; b.hline(tx, walkY - 4 - hop, 5, T.MID); b.hline(dir > 0 ? tx : tx + 1, walkY - 5 - hop, 4, T.K);
+    }
+    // cyclists on the road
+    for (j = Math.floor(SEC / 29); j > Math.floor(SEC / 29) - 2; j--) {
+      h = hash(R.day + 'bike' + j); var th = hour(j * 29); v = 58 + (h >>> 9) % 22; e = SEC - j * 29 - (h >>> 3) % 20; dir = (h >>> 7) & 1 ? 1 : -1;
+      if (dark(th) || h % 100 >= (rush(th) ? 60 : 30) || e < 0 || e * v > w + 60) continue;
+      var bx = Math.round(dir > 0 ? -30 + e * v : w + 16 - e * v), wy = y0 + (dir > 0 ? 24 : 15), mx = function (o) { return dir > 0 ? bx + o : bx + 14 - o; };
+      bit(b, look(rng(R.day + 'cyc' + j)), bx, wy - 1, 'stand');
+      [-2, 16].forEach(function (o) { var cx = mx(o), a; for (a = 0; a < 24; a++) b.px(Math.round(cx + Math.cos(a / 24 * Math.PI * 2) * 4), Math.round(wy + Math.sin(a / 24 * Math.PI * 2) * 4), T.K); a = bx / 4 * dir; b.line(cx - Math.round(Math.cos(a) * 3), wy - Math.round(Math.sin(a) * 3), cx + Math.round(Math.cos(a) * 3), wy + Math.round(Math.sin(a) * 3), T.K); });
+      b.line(mx(-2), wy, mx(7), wy, T.K); b.line(mx(7), wy, mx(4), wy - 7, T.K); b.line(mx(7), wy, mx(13), wy - 6, T.K); b.line(mx(4), wy - 6, mx(13), wy - 6, T.K); b.line(mx(16), wy, mx(13), wy - 9, T.K);
+      b.hline(Math.min(mx(2), mx(5)), wy - 7, 4, T.K); b.hline(Math.min(mx(12), mx(14)), wy - 9, 3, T.K);
+    }
+    // people on the pavement
+    for (lane = 0; lane < 3; lane++) {
+      var per = 17 + lane * 9, i0 = Math.floor(SEC / per);
+      for (j = i0; j > i0 - 5; j--) {
+        h = hash(R.day + 'pass' + lane + '.' + j); var ph0 = hour(j * per);
+        if (dark(ph0) || h % 100 >= (rush(ph0) ? 68 : 36)) continue;
+        e = SEC - j * per - ((h >>> 13) % 1000) / 1000 * per; if (e < 0) continue;
+        dir = (h >>> 7) & 1 ? 1 : -1; v = 20 + (h >>> 9) % 11;
+        var full = w + 44, stops = (h >>> 5) % 4 === 0, dp = Math.round((0.25 + ((h >>> 15) % 50) / 100) * full), tp = dp / v, pl = 4 + (h >>> 4) % 5;
+        var halt = stops && e >= tp && e < tp + pl, dist = !stops || e < tp ? e * v : halt ? dp : (e - pl) * v;
+        if (dist > full) continue;
+        x = Math.round(dir > 0 ? -30 + dist : w + 14 - dist);
+        var pp = look(rng(R.day + 'passer' + lane + '.' + j)), carry = [null, 'phone', 'mug', 'papers', null][(h >>> 17) % 5];
+        var hy = bit(b, pp, x, walkY, halt ? 'stand' : 'walk', halt ? 'phone' : stops ? null : carry);
+        if (lane === 0 && (h >>> 11) % 5 < 2) { var dgx = dir > 0 ? x - 16 : x + 17; b.spr(DOG, dgx, walkY - 6 - (halt ? 0 : Math.floor(dgx / 3) & 1), { o: T.K, K: T.LIGHT, W: T.W }, dir < 0); b.line(dir > 0 ? x + 1 : x + 10, hy + 12, dir > 0 ? dgx + 8 : dgx + 3, walkY - 5, T.K); }
+      }
+    }
+  }
   function traffic(b, y0, w, M, R) {
+    if (LIVE && !SNOW) return passers(b, y0, w, R);
     var t = M.t, r = rng(R.day + 'street' + Math.floor(t * 4)), night = t < 6 || t >= 22, rush = (t >= 7.5 && t < 9.5) || (t >= 16.5 && t < 18.5);
     var walkY = y0 + 5, courier = !night && M.weekday && t >= 9 && t < 17 && r() < 0.3;
     var who = function (k) { return look(rng(R.day + 'passer' + Math.floor(t * 4) + k)); };
@@ -2444,6 +2659,13 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     if (M.vent) say(cold, 'SCRATCHING IN THE AIR DUCTS ' + on(M.vent.floor) + '. FACILITIES SAYS: WIND.');
     if (M.diver) say(hot, 'A DIVER IS CLEANING THE SHARK TANK ' + on(AQ) + '. KEVIN IS WATCHING.');
     if (M.cleaner) say(hot, 'THE CLEANER IS ' + on(M.cleaner.floor) + '. MIND THE WET FLOOR.');
+    if (STATS) {
+      if (STATS.res >= 2) say(hot, STATS.res + ' PEOPLE WHO WATCH US LIVE HERE NOW. SAY HI.');
+      if (STATS.planes >= 5) say(cold, STATS.planes + ' PAPER PLANES THROWN TODAY. THE CLEANER HAS BEEN WARNED.');
+      if (STATS.says >= 3) say(cold, 'PEOPLE WATCHING PUT ' + STATS.says + ' LINES IN OUR MOUTHS TODAY.');
+      if (STATS.pizzas >= 2) say(cold, 'PIZZA NUMBER ' + STATS.pizzas + ' TODAY. NOBODY IS COMPLAINING.');
+      if (STATS.parties >= 2) say(cold, STATS.parties + ' PARTIES TODAY. WORK IS GOING GREAT.');
+    }
     // and the usual chatter
     if (!M.weekday) {
       say(cold, 'WEEKEND. THE PLANTS ARE IN CHARGE.');
@@ -2591,15 +2813,20 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     var roofTop = yF - (TOP - focus) * FLOOR_H; if (roofTop > 0) yF -= roofTop;
     var streetBot = yF + (focus + (focus === BASE || LIVE && !AUTO ? 3 : 2)) * FLOOR_H; // live, you can scroll down into the basement
     if (streetBot < hs) yF += hs - streetBot;
+    // the camera sits between two pixel rows most of the time: sub is what is left over, for whoever draws
+    // the result to shift by (live does, so scrolling is as fine as the screen allows)
+    var base = yF + focus * FLOOR_H, bi = Math.round(base);
+    CAMY = { bi: bi, w: w, focus: focus };
     for (var fl = TOP + 1; fl >= -3; fl--) {
-      var y = Math.round(yF - (fl - focus) * FLOOR_H);
+      var y = bi - fl * FLOOR_H;
       if (y >= hs || y + FLOOR_H <= 0) continue;
       if (fl > TOP) b.rect(0, y, w, FLOOR_H, SKYT); else if (fl < BASE) b.rect(0, y, w, FLOOR_H, T.MID); else storey(b, y, w, fl, M, R);
     }
+    if (LIVE && SAYS.length) talkOutside(b, w);
     if (LIVE && PLANES.length) planes(b, focus);
     if (msg) ticker(b, w, h, msg);
     if (LIVE) LAST = { b: b, M: M, t: t, day: R.day };
-    return { b: b, M: M, focus: focus, pick: pick, msg: msg, top: TOP, cal: CAL };
+    return { b: b, M: M, focus: focus, pick: pick, msg: msg, top: TOP, cal: CAL, sub: base - bi, hs: hs };
   }
 
   // ------------------------------------------------------------ live: who is that?
@@ -2635,7 +2862,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
       return { name: pick(rng('nm' + hitKey(h)), NAMES2), role: q.job || ROLE[h.room] || 'Visitor', now: h.pose === 'walk' ? 'Walking' : h.extra === 'phone' ? 'On the phone' : h.pose === 'wave' ? 'Waving' : 'Hanging around', next: '' };
     }
     var p = o.p, s = o.s, sec = LAST.t * 3600, fl = function (f) { return 'floor ' + num(f); };
-    var name = pick(rng('nm' + keyOf(p) + (p.job ? LAST.day : '')), NAMES2);
+    var name = p.name || pick(rng('nm' + keyOf(p) + (p.job ? LAST.day : '')), NAMES2);
     var role = p.job || (TOWER[p.floor] === 'boss' ? 'The boss, top floor' : 'Works on ' + fl(p.floor));
     var now = s.at === 'desk' ? (s.eating ? 'Lunch at the desk' : 'At their desk')
       : s.at === 'cafe' ? (s.pizza ? 'Eating pizza' : s.drink ? 'Friday drinks' : s.lunch ? 'Having lunch' : 'Getting coffee')
@@ -2694,7 +2921,7 @@ data-ts="{{ trmnl.system.timestamp_utc }}" data-off="{{ trmnl.user.utc_offset | 
     el.appendChild(c);
     el.setAttribute("data-info", JSON.stringify({ origin: [rr.left * dpr, rr.top * dpr], depth: depth, ratio: ratio, panel: panel, scale: scale, art: [w, h], device: [dw, dh], focus: focus, egg: M.egg ? M.egg.kind : null, cal: CAL, t: M.t, news: msg }));
   }
-  window.__op = { Bmp: Bmp, person: bit, T: T, HEAD: HEAD, BODY: BODY, G4: G4, G2: G2, ink1: ink1, render: render, scene: scene, FLOOR_H: FLOOR_H, guests: function (n, bell) { GUESTS = n; BELL = bell; }, who: who, locate: locate, follow: function (k) { FOLLOW = k || null; }, poke: function (k) { POKE = { key: k, s: SEC }; }, events: function (l) { EVENTS = (l || []).slice().sort(function (u, v) { return u.s - v.s; }); }, plane: function (x, y, cam, dir) { PLANES.push({ x: x, y: y, cam: cam, dir: dir, s: SEC }); if (PLANES.length > 12) PLANES.shift(); } };
+  window.__op = { Bmp: Bmp, person: bit, T: T, HEAD: HEAD, BODY: BODY, G4: G4, G2: G2, ink1: ink1, render: render, scene: scene, FLOOR_H: FLOOR_H, guests: function (n, bell) { GUESTS = n; BELL = bell; }, who: who, locate: locate, num: num, follow: function (k) { FOLLOW = k || null; }, poke: function (k) { POKE = { key: k, s: SEC }; }, events: function (l) { EVENTS = (l || []).slice().sort(function (u, v) { return u.s - v.s; }); }, say: function (key, msg) { SAYS.push({ key: key, msg: String(msg).toUpperCase().slice(0, 26), s: SEC }); if (SAYS.length > 10) SAYS.shift(); }, plane: function (x, y, cam, dir, quiet) { var L = landing(x, y, dir, cam); PLANES.push({ x: x, y: y, cam: cam, dir: dir, s: SEC, land: L, quiet: !!quiet }); if (PLANES.length > 12) PLANES.shift(); return L; }, litter: function (l) { LITTER = l || []; }, stats: function (o) { STATS = o || null; }, me: function (k) { ME = k || null; }, torch: function (x, y) { TORCH = x == null ? null : { x: Math.round(x), y: Math.round(y) }; } };
   function run() { var els = document.querySelectorAll('.op'); for (var i = 0; i < els.length; i++) { while (els[i].firstChild) els[i].removeChild(els[i].firstChild); render(els[i]); } }
   // Devices render a fresh page, but the markup editor swaps the screen class
   // and size in place when you pick another device, so draw again then.
